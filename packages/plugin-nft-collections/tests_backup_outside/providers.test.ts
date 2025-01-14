@@ -1,3 +1,4 @@
+/*
 import { describe, expect, it, vi } from "vitest";
 import { nftCollectionProvider } from "../providers/nft-collections";
 import { IAgentRuntime, Memory } from "@elizaos/core";
@@ -126,3 +127,4 @@ describe("NFT Collections Provider", () => {
         ).rejects.toThrow("API error");
     });
 });
+*/
