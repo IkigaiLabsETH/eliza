@@ -53,10 +53,10 @@ function getAddress(address: string): string {
 
 // Environment Variable Validation Schema
 export const EnvConfigSchema = z.object({
-    TWITTER_API_KEY: z.string().min(1, "Twitter API key is required"),
-    DUNE_API_KEY: z.string().min(1, "Dune API key is required"),
-    OPENSEA_API_KEY: z.string().min(1, "OpenSea API key is required"),
-    RESERVOIR_API_KEY: z.string().min(1, "Reservoir API key is required"),
+    TWITTER_API_KEY: z.string().optional().nullable(),
+    DUNE_API_KEY: z.string().optional().nullable(),
+    OPENSEA_API_KEY: z.string().optional().nullable(),
+    RESERVOIR_API_KEY: z.string().min(1, "RESERVOIR_API_KEY is required"),
 });
 
 // Function to validate environment variables
@@ -64,14 +64,23 @@ export function validateEnvironmentVariables(
     env: Record<string, string | undefined>
 ) {
     try {
-        return EnvConfigSchema.parse(env);
+        // Filter out undefined values for optional keys
+        const filteredEnv = {
+            ...env,
+            TWITTER_API_KEY: env.TWITTER_API_KEY || null,
+            DUNE_API_KEY: env.DUNE_API_KEY || null,
+            OPENSEA_API_KEY: env.OPENSEA_API_KEY || null,
+        };
+        return EnvConfigSchema.parse(filteredEnv);
     } catch (error) {
         if (error instanceof z.ZodError) {
-            const errorMessages = error.errors
+            // Only show errors for required fields
+            const requiredErrors = error.errors
+                .filter((err) => err.path.includes("RESERVOIR_API_KEY"))
                 .map((err) => err.message)
                 .join(", ");
             throw new Error(
-                `Environment Variable Validation Failed: ${errorMessages}`
+                `Environment Variable Validation Failed: ${requiredErrors || "RESERVOIR_API_KEY is required"}`
             );
         }
         throw error;
