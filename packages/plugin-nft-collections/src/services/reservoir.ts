@@ -361,7 +361,7 @@ export class ReservoirService {
         );
 
         try {
-            const batchSize = 20; // Optimal batch size for Reservoir API
+            const batchSize = 20;
             const batches = Math.ceil(limit / batchSize);
             const promises = [];
 
@@ -371,15 +371,25 @@ export class ReservoirService {
 
                 promises.push(
                     this.cachedRequest<any>(
-                        "/collections/v6",
+                        "/collections/v7",
                         {
                             limit: currentLimit,
                             offset,
                             sortBy: "1DayVolume",
+                            includeTopBid: "true",
+                            normalizeRoyalties: "true",
+                            includeSalesCount: "true",
+                            includeAttributes: "true",
+                            includeLastSale: "true",
+                            includeOwnerCount: "true",
+                            includeMarketplaces: "true",
+                            includeDynamicPricing: "true",
+                            includeRoyalties: "true",
+                            includeCollectionMetadata: "true",
                         },
                         runtime,
                         {
-                            ttl: 3600, // Cache for 1 hour
+                            ttl: 300,
                             context: "top_collections",
                         }
                     )
@@ -389,31 +399,94 @@ export class ReservoirService {
             const results = await Promise.all(promises);
             const collections = results.flatMap((data) => data.collections);
 
+            console.log(
+                "Raw Reservoir API response:",
+                JSON.stringify(collections[0], null, 2)
+            );
+
             const mappedCollections = collections
                 .slice(0, limit)
-                .map((collection: any) => ({
-                    address: collection.id,
-                    name: collection.name,
-                    symbol: collection.symbol,
-                    description: collection.description,
-                    imageUrl: collection.image,
-                    externalUrl: collection.externalUrl,
-                    twitterUsername: collection.twitterUsername,
-                    discordUrl: collection.discordUrl,
-                    verified:
-                        collection.openseaVerificationStatus === "verified",
-                    floorPrice: collection.floorAsk?.price?.amount?.native || 0,
-                    volume24h: collection.volume24h || 0,
-                    marketCap: collection.marketCap || 0,
-                    totalSupply: collection.tokenCount || 0,
-                    holders: collection.ownerCount || 0,
-                    lastUpdate: new Date().toISOString(),
-                }));
+                .map((collection: any) => {
+                    const floorPrice =
+                        collection.floorAsk?.price?.amount?.native ||
+                        collection.floorPrice ||
+                        collection.floorAskPrice ||
+                        0;
+
+                    console.log(
+                        `Collection ${collection.name} floor price data:`,
+                        {
+                            collectionId: collection.id,
+                            floorAskPrice:
+                                collection.floorAsk?.price?.amount?.native,
+                            floorPrice: collection.floorPrice,
+                            rawFloorAsk: collection.floorAsk,
+                            finalFloorPrice: floorPrice,
+                        }
+                    );
+
+                    return {
+                        address: collection.id,
+                        name: collection.name,
+                        symbol: collection.symbol,
+                        description: collection.description,
+                        imageUrl: collection.image,
+                        externalUrl: collection.externalUrl,
+                        twitterUsername: collection.twitterUsername,
+                        discordUrl: collection.discordUrl,
+                        verified:
+                            collection.openseaVerificationStatus === "verified",
+                        floorPrice,
+                        topBid: collection.topBid?.price?.amount?.native || 0,
+                        volume24h: collection.volume?.["1day"] || 0,
+                        volume7d: collection.volume?.["7day"] || 0,
+                        volume30d: collection.volume?.["30day"] || 0,
+                        volumeAll: collection.volume?.allTime || 0,
+                        marketCap: collection.marketCap || 0,
+                        totalSupply: collection.tokenCount || 0,
+                        holders: collection.ownerCount || 0,
+                        sales24h: collection.salesCount?.["1day"] || 0,
+                        sales7d: collection.salesCount?.["7day"] || 0,
+                        sales30d: collection.salesCount?.["30day"] || 0,
+                        salesAll: collection.salesCount?.allTime || 0,
+                        lastSale: collection.lastSale
+                            ? {
+                                  price:
+                                      collection.lastSale.price?.amount
+                                          ?.native || 0,
+                                  timestamp: collection.lastSale.timestamp,
+                                  tokenId: collection.lastSale.token?.tokenId,
+                              }
+                            : undefined,
+                        royalties: collection.royalties
+                            ? {
+                                  bps: collection.royalties.bps,
+                                  recipient: collection.royalties.recipient,
+                              }
+                            : undefined,
+                        attributes: collection.attributes,
+                        marketplaces: collection.marketplaces?.map((m) => ({
+                            name: m.name,
+                            url: m.url,
+                            icon: m.icon,
+                        })),
+                        lastUpdate: new Date().toISOString(),
+                    };
+                });
 
             endOperation();
             return mappedCollections;
         } catch (error) {
-            // Error handling remains similar to previous implementation
+            console.error("Error fetching collections:", error);
+            this.performanceMonitor.recordMetric({
+                operation: "getTopCollections",
+                duration: 0,
+                success: false,
+                metadata: {
+                    error: error.message,
+                    limit,
+                },
+            });
             throw error;
         }
     }
@@ -423,12 +496,32 @@ export class ReservoirService {
         collection: string;
         limit: number;
         sortBy: "price" | "rarity";
+        currencies?: string[];
+        maxPrice?: number;
+        minPrice?: number;
     }): Promise<
         Array<{
             tokenId: string;
             price: number;
+            priceUsd?: number;
             seller: string;
             marketplace: string;
+            validFrom: string;
+            validUntil: string;
+            source?: {
+                id: string;
+                domain: string;
+                name: string;
+                icon: string;
+                url: string;
+            };
+            token?: {
+                rarity?: number;
+                rarityRank?: number;
+                attributes?: Record<string, string>;
+                image?: string;
+                name?: string;
+            };
         }>
     > {
         const endOperation = this.performanceMonitor.startOperation(
@@ -445,37 +538,96 @@ export class ReservoirService {
                 collection: options.collection,
                 limit: options.limit?.toString() || "10",
                 sortBy: options.sortBy === "price" ? "floorAskPrice" : "rarity",
-                includeAttributes:
-                    options.sortBy === "rarity" ? "true" : "false",
+                sortDirection: "asc",
+                includeAttributes: "true",
+                includeRawData: "true",
+                includeDynamicPricing: "true",
+                includeRoyalties: "true",
+                normalizeRoyalties: "true",
+                currencies: options.currencies?.join(","),
+                maxPrice: options.maxPrice?.toString(),
+                minPrice: options.minPrice?.toString(),
             };
 
             const response = await this.makeRequest<{
                 asks: Array<{
+                    id: string;
                     token: {
                         tokenId: string;
                         collection: { id: string };
+                        attributes?: Array<{ key: string; value: string }>;
+                        image?: string;
+                        name?: string;
+                        rarityScore?: number;
+                        rarityRank?: number;
                     };
                     price: {
                         amount: {
                             native: number;
                             usd?: number;
                         };
+                        currency?: {
+                            contract: string;
+                            name: string;
+                            symbol: string;
+                            decimals: number;
+                        };
                     };
                     maker: string;
-                    source: { name: string };
+                    validFrom: number;
+                    validUntil: number;
+                    source: {
+                        id: string;
+                        domain: string;
+                        name: string;
+                        icon: string;
+                        url: string;
+                    };
                 }>;
-            }>("/collections/floor/v2", queryParams, 1, {} as IAgentRuntime);
+            }>("/orders/asks/v4", queryParams, 1, {} as IAgentRuntime);
+
+            console.log(
+                "Raw floor listings response:",
+                JSON.stringify(response.asks[0], null, 2)
+            );
 
             const floorListings = response.asks.map((ask) => ({
                 tokenId: ask.token.tokenId,
                 price: ask.price.amount.native,
+                priceUsd: ask.price.amount.usd,
                 seller: ask.maker,
                 marketplace: ask.source?.name || "Reservoir",
+                validFrom: new Date(ask.validFrom * 1000).toISOString(),
+                validUntil: new Date(ask.validUntil * 1000).toISOString(),
+                source: ask.source
+                    ? {
+                          id: ask.source.id,
+                          domain: ask.source.domain,
+                          name: ask.source.name,
+                          icon: ask.source.icon,
+                          url: ask.source.url,
+                      }
+                    : undefined,
+                token: {
+                    rarity: ask.token.rarityScore,
+                    rarityRank: ask.token.rarityRank,
+                    attributes: ask.token.attributes
+                        ? Object.fromEntries(
+                              ask.token.attributes.map((attr) => [
+                                  attr.key,
+                                  attr.value,
+                              ])
+                          )
+                        : undefined,
+                    image: ask.token.image,
+                    name: ask.token.name,
+                },
             }));
 
             endOperation();
             return floorListings;
         } catch (error) {
+            console.error("Error fetching floor listings:", error);
             this.performanceMonitor.recordMetric({
                 operation: "getFloorListings",
                 duration: 0,
@@ -485,7 +637,6 @@ export class ReservoirService {
                     collection: options.collection,
                 },
             });
-
             throw error;
         }
     }
