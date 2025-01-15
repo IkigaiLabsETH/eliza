@@ -119,6 +119,51 @@ interface TokenData {
     };
 }
 
+interface TokenFloorParams {
+    tokens?: string[];
+    collection?: string;
+    normalizeRoyalties?: boolean;
+    includeDynamicPricing?: boolean;
+    currencies?: string[];
+}
+
+interface TokenFloorData {
+    id: string;
+    collection: {
+        id: string;
+        name: string;
+    };
+    contract: string;
+    tokenId: string;
+    floorAsk: {
+        id: string;
+        price: {
+            currency: {
+                contract: string;
+                name: string;
+                symbol: string;
+                decimals: number;
+            };
+            amount: {
+                raw: string;
+                decimal: number;
+                usd: number;
+                native: number;
+            };
+        };
+        maker: string;
+        validFrom: number;
+        validUntil: number;
+        source: {
+            id: string;
+            domain: string;
+            name: string;
+            icon: string;
+            url: string;
+        };
+    };
+}
+
 export class ReservoirService {
     private cacheManager?: MemoryCacheManager;
     private rateLimiter?: RateLimiter;
@@ -988,6 +1033,104 @@ export class ReservoirService {
                 includeDynamicPricing: true,
                 includeLastSale: true,
                 includeRawData: true,
+            },
+            runtime
+        );
+
+        if (!tokens.length) {
+            throw new Error(`Token ${collection}:${tokenId} not found`);
+        }
+
+        return tokens[0];
+    }
+
+    /**
+     * Get floor prices for multiple tokens
+     * @see https://docs.reservoir.tools/reference/gettokensfloorv1
+     *
+     * @param params Configuration options for the token floor request
+     * @param runtime Agent runtime for API key management
+     * @returns Array of token floor data with pricing information
+     */
+    async getTokensFloor(
+        params: TokenFloorParams,
+        runtime: IAgentRuntime
+    ): Promise<TokenFloorData[]> {
+        const endOperation = this.performanceMonitor.startOperation(
+            "getTokensFloor",
+            { params }
+        );
+
+        try {
+            if (!params.collection && !params.tokens?.length) {
+                throw new Error(
+                    "Either collection or tokens parameter must be provided"
+                );
+            }
+
+            const queryParams = {
+                tokens: params.tokens?.join(","),
+                collection: params.collection,
+                normalizeRoyalties: params.normalizeRoyalties
+                    ? "true"
+                    : undefined,
+                includeDynamicPricing: params.includeDynamicPricing
+                    ? "true"
+                    : undefined,
+                currencies: params.currencies?.join(","),
+            };
+
+            const response = await this.cachedRequest<{
+                tokens: TokenFloorData[];
+            }>("/tokens/floor/v1", queryParams, runtime, {
+                ttl: 300, // 5 minutes cache
+                context: "tokens_floor",
+            });
+
+            console.log(
+                "Raw tokens floor response:",
+                JSON.stringify(response.tokens[0], null, 2)
+            );
+
+            endOperation();
+            return response.tokens;
+        } catch (error) {
+            console.error("Error fetching token floor data:", error);
+            this.performanceMonitor.recordMetric({
+                operation: "getTokensFloor",
+                duration: 0,
+                success: false,
+                metadata: {
+                    error: error.message,
+                    params,
+                },
+            });
+            throw error;
+        }
+    }
+
+    /**
+     * Get floor price for a specific token
+     * @param collection Collection address
+     * @param tokenId Token ID
+     * @param runtime Agent runtime
+     */
+    async getTokenFloor(
+        collection: string,
+        tokenId: string,
+        runtime: IAgentRuntime,
+        options: {
+            normalizeRoyalties?: boolean;
+            includeDynamicPricing?: boolean;
+            currencies?: string[];
+        } = {}
+    ): Promise<TokenFloorData> {
+        const tokens = await this.getTokensFloor(
+            {
+                tokens: [`${collection}:${tokenId}`],
+                normalizeRoyalties: options.normalizeRoyalties,
+                includeDynamicPricing: options.includeDynamicPricing,
+                currencies: options.currencies,
             },
             runtime
         );
