@@ -164,6 +164,64 @@ interface TokenFloorData {
     };
 }
 
+interface TokenAsksParams {
+    token: string;
+    sortBy?: "price" | "createdAt";
+    sortDirection?: "asc" | "desc";
+    normalizeRoyalties?: boolean;
+    includeCriteriaMetadata?: boolean;
+    includeRawData?: boolean;
+    includeDynamicPricing?: boolean;
+    currencies?: string[];
+}
+
+interface TokenAskData {
+    id: string;
+    price: {
+        currency: {
+            contract: string;
+            name: string;
+            symbol: string;
+            decimals: number;
+        };
+        amount: {
+            raw: string;
+            decimal: number;
+            usd: number;
+            native: number;
+        };
+    };
+    maker: string;
+    validFrom: number;
+    validUntil: number;
+    source: {
+        id: string;
+        domain: string;
+        name: string;
+        icon: string;
+        url: string;
+    };
+    criteria?: {
+        kind: string;
+        data: {
+            token: {
+                tokenId: string;
+                name?: string;
+                image?: string;
+            };
+            collection: {
+                id: string;
+                name: string;
+                image?: string;
+            };
+        };
+    };
+    dynamicPricing?: {
+        kind: string;
+        data: Record<string, any>;
+    };
+}
+
 export class ReservoirService {
     private cacheManager?: MemoryCacheManager;
     private rateLimiter?: RateLimiter;
@@ -1140,5 +1198,107 @@ export class ReservoirService {
         }
 
         return tokens[0];
+    }
+
+    /**
+     * Get a list of asks (listings) for a specific token
+     * @see https://docs.reservoir.tools/reference/gettokenstokenasksv1
+     *
+     * @param params Configuration options for the token asks request
+     * @param runtime Agent runtime for API key management
+     * @returns Array of token ask data with pricing information
+     */
+    async getTokenAsks(
+        params: TokenAsksParams,
+        runtime: IAgentRuntime
+    ): Promise<TokenAskData[]> {
+        const endOperation = this.performanceMonitor.startOperation(
+            "getTokenAsks",
+            { params }
+        );
+
+        try {
+            if (!params.token) {
+                throw new Error("Token parameter is required");
+            }
+
+            const queryParams = {
+                sortBy: params.sortBy || "price",
+                sortDirection: params.sortDirection || "asc",
+                normalizeRoyalties: params.normalizeRoyalties
+                    ? "true"
+                    : undefined,
+                includeCriteriaMetadata: params.includeCriteriaMetadata
+                    ? "true"
+                    : undefined,
+                includeRawData: params.includeRawData ? "true" : undefined,
+                includeDynamicPricing: params.includeDynamicPricing
+                    ? "true"
+                    : undefined,
+                currencies: params.currencies?.join(","),
+            };
+
+            const response = await this.cachedRequest<{ asks: TokenAskData[] }>(
+                `/tokens/${params.token}/asks/v1`,
+                queryParams,
+                runtime,
+                {
+                    ttl: 300, // 5 minutes cache
+                    context: "token_asks",
+                }
+            );
+
+            console.log(
+                "Raw token asks response:",
+                JSON.stringify(response.asks[0], null, 2)
+            );
+
+            endOperation();
+            return response.asks;
+        } catch (error) {
+            console.error("Error fetching token asks:", error);
+            this.performanceMonitor.recordMetric({
+                operation: "getTokenAsks",
+                duration: 0,
+                success: false,
+                metadata: {
+                    error: error.message,
+                    params,
+                },
+            });
+            throw error;
+        }
+    }
+
+    /**
+     * Get asks (listings) for a specific token with collection context
+     * @param collection Collection address
+     * @param tokenId Token ID
+     * @param runtime Agent runtime
+     */
+    async getTokenListings(
+        collection: string,
+        tokenId: string,
+        runtime: IAgentRuntime,
+        options: {
+            sortBy?: "price" | "createdAt";
+            sortDirection?: "asc" | "desc";
+            normalizeRoyalties?: boolean;
+            currencies?: string[];
+        } = {}
+    ): Promise<TokenAskData[]> {
+        return this.getTokenAsks(
+            {
+                token: `${collection}:${tokenId}`,
+                sortBy: options.sortBy,
+                sortDirection: options.sortDirection,
+                normalizeRoyalties: options.normalizeRoyalties,
+                includeCriteriaMetadata: true,
+                includeRawData: true,
+                includeDynamicPricing: true,
+                currencies: options.currencies,
+            },
+            runtime
+        );
     }
 }
