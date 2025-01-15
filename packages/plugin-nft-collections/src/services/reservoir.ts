@@ -398,6 +398,48 @@ interface CollectionSearchData {
     };
 }
 
+// Trending collections interfaces
+interface TrendingCollectionsParams {
+    period?: "1h" | "6h" | "24h" | "7d" | "30d";
+    sortBy?: "volume" | "sales" | "floorAskPrice" | "floorSaleChange";
+    limit?: number;
+    offset?: number;
+    chain?: string;
+    includeMetadata?: boolean;
+    includeTopBid?: boolean;
+    includeAttributes?: boolean;
+    includeOwnerCount?: boolean;
+    includeMintStages?: boolean;
+    includeMarketplaces?: boolean;
+}
+
+interface TrendingCollectionData extends CollectionSearchData {
+    collection: CollectionSearchData["collection"] & {
+        volumeChange?: {
+            "1h"?: number;
+            "6h"?: number;
+            "24h"?: number;
+            "7d"?: number;
+            "30d"?: number;
+        };
+        floorSaleChange?: {
+            "1h"?: number;
+            "6h"?: number;
+            "24h"?: number;
+            "7d"?: number;
+            "30d"?: number;
+        };
+        salesCount?: {
+            "1h"?: number;
+            "6h"?: number;
+            "24h"?: number;
+            "7d"?: number;
+            "30d"?: number;
+            allTime?: number;
+        };
+    };
+}
+
 export class ReservoirService {
     private cacheManager?: MemoryCacheManager;
     private rateLimiter?: RateLimiter;
@@ -1669,6 +1711,104 @@ export class ReservoirService {
                 chain: options.chain,
                 limit: options.limit || 20,
                 includeMetadata: options.includeMetadata ?? true,
+                includeTopBid: true,
+                includeAttributes: true,
+                includeOwnerCount: true,
+                includeMintStages: true,
+                includeMarketplaces: true,
+            },
+            runtime
+        );
+    }
+
+    /**
+     * Get trending collections across multiple chains
+     * @see https://docs.reservoir.tools/reference/getcollectionstrendingv1
+     *
+     * @param params Configuration options for the trending collections request
+     * @param runtime Agent runtime for API key management
+     * @returns Array of trending collection data with market metrics
+     */
+    async getTrendingCollections(
+        params: TrendingCollectionsParams,
+        runtime: IAgentRuntime
+    ): Promise<TrendingCollectionData[]> {
+        const endOperation = this.performanceMonitor.startOperation(
+            "getTrendingCollections",
+            { params }
+        );
+
+        try {
+            const queryParams = {
+                period: params.period || "24h",
+                sortBy: params.sortBy || "volume",
+                limit: params.limit?.toString(),
+                offset: params.offset?.toString(),
+                chain: params.chain,
+                includeMetadata: params.includeMetadata ? "true" : undefined,
+                includeTopBid: params.includeTopBid ? "true" : undefined,
+                includeAttributes: params.includeAttributes
+                    ? "true"
+                    : undefined,
+                includeOwnerCount: params.includeOwnerCount
+                    ? "true"
+                    : undefined,
+                includeMintStages: params.includeMintStages
+                    ? "true"
+                    : undefined,
+                includeMarketplaces: params.includeMarketplaces
+                    ? "true"
+                    : undefined,
+            };
+
+            const response = await this.cachedRequest<{
+                collections: TrendingCollectionData[];
+            }>("/collections/trending/v1", queryParams, runtime, {
+                ttl: 300, // 5 minutes cache
+                context: "trending_collections",
+            });
+
+            console.log(
+                "Raw trending collections response:",
+                JSON.stringify(response.collections[0], null, 2)
+            );
+
+            endOperation();
+            return response.collections;
+        } catch (error) {
+            console.error("Error fetching trending collections:", error);
+            this.performanceMonitor.recordMetric({
+                operation: "getTrendingCollections",
+                duration: 0,
+                success: false,
+                metadata: {
+                    error: error.message,
+                    params,
+                },
+            });
+            throw error;
+        }
+    }
+
+    /**
+     * Get trending collections with default parameters optimized for discovery
+     * @param runtime Agent runtime
+     */
+    async getHotCollections(
+        runtime: IAgentRuntime,
+        options: {
+            chain?: string;
+            period?: "1h" | "6h" | "24h" | "7d" | "30d";
+            limit?: number;
+        } = {}
+    ): Promise<TrendingCollectionData[]> {
+        return this.getTrendingCollections(
+            {
+                period: options.period || "24h",
+                sortBy: "volume",
+                limit: options.limit || 20,
+                chain: options.chain,
+                includeMetadata: true,
                 includeTopBid: true,
                 includeAttributes: true,
                 includeOwnerCount: true,
