@@ -280,6 +280,124 @@ interface TokenBidData {
     };
 }
 
+// Collection search interfaces
+interface CollectionSearchParams {
+    name?: string;
+    community?: string;
+    chain?: string;
+    includeMetadata?: boolean;
+    includeTopBid?: boolean;
+    includeAttributes?: boolean;
+    includeOwnerCount?: boolean;
+    includeMintStages?: boolean;
+    includeMarketplaces?: boolean;
+    limit?: number;
+    offset?: number;
+}
+
+interface CollectionSearchData {
+    collection: {
+        id: string;
+        name: string;
+        slug: string;
+        symbol?: string;
+        description?: string;
+        image?: string;
+        banner?: string;
+        discordUrl?: string;
+        externalUrl?: string;
+        twitterUsername?: string;
+        openseaVerificationStatus?: string;
+        tokenCount?: number;
+        ownerCount?: number;
+        primaryContract: string;
+        tokenSetId?: string;
+        contractKind?: string;
+        rank?: {
+            "1day": number;
+            "7day": number;
+            "30day": number;
+            allTime: number;
+        };
+        volume?: {
+            "1day": number;
+            "7day": number;
+            "30day": number;
+            allTime: number;
+        };
+        volumeChange?: {
+            "1day": number;
+            "7day": number;
+            "30day": number;
+        };
+        floorAsk?: {
+            id: string;
+            price: {
+                currency: {
+                    contract: string;
+                    name: string;
+                    symbol: string;
+                    decimals: number;
+                };
+                amount: {
+                    raw: string;
+                    decimal: number;
+                    usd: number;
+                    native: number;
+                };
+            };
+            maker: string;
+            validFrom: number;
+            validUntil: number;
+        };
+        topBid?: {
+            id: string;
+            price: {
+                currency: {
+                    contract: string;
+                    name: string;
+                    symbol: string;
+                    decimals: number;
+                };
+                amount: {
+                    raw: string;
+                    decimal: number;
+                    usd: number;
+                    native: number;
+                };
+            };
+            maker: string;
+            validFrom: number;
+            validUntil: number;
+        };
+        attributes?: Array<{
+            key: string;
+            kind: string;
+            count: number;
+        }>;
+        mintStages?: Array<{
+            stage: string;
+            tokenId?: string;
+            kind: string;
+            status: string;
+            price?: number;
+            maxMintsPerWallet?: number;
+            startTime: string;
+            endTime: string;
+            allowlist?: {
+                merkleRoot: string;
+                proof?: string[];
+            };
+        }>;
+        marketplaces?: Array<{
+            name: string;
+            url: string;
+            icon: string;
+        }>;
+        chain: string;
+    };
+}
+
 export class ReservoirService {
     private cacheManager?: MemoryCacheManager;
     private rateLimiter?: RateLimiter;
@@ -1457,6 +1575,105 @@ export class ReservoirService {
                 includeRawData: true,
                 includeDynamicPricing: true,
                 currencies: options.currencies,
+            },
+            runtime
+        );
+    }
+
+    /**
+     * Search for collections across multiple chains
+     * @see https://docs.reservoir.tools/reference/getcollectionssearchv1
+     *
+     * @param params Search configuration options
+     * @param runtime Agent runtime for API key management
+     * @returns Array of collection data matching the search criteria
+     */
+    async searchCollections(
+        params: CollectionSearchParams,
+        runtime: IAgentRuntime
+    ): Promise<CollectionSearchData[]> {
+        const endOperation = this.performanceMonitor.startOperation(
+            "searchCollections",
+            { params }
+        );
+
+        try {
+            const queryParams = {
+                name: params.name,
+                community: params.community,
+                chain: params.chain,
+                includeMetadata: params.includeMetadata ? "true" : undefined,
+                includeTopBid: params.includeTopBid ? "true" : undefined,
+                includeAttributes: params.includeAttributes
+                    ? "true"
+                    : undefined,
+                includeOwnerCount: params.includeOwnerCount
+                    ? "true"
+                    : undefined,
+                includeMintStages: params.includeMintStages
+                    ? "true"
+                    : undefined,
+                includeMarketplaces: params.includeMarketplaces
+                    ? "true"
+                    : undefined,
+                limit: params.limit?.toString(),
+                offset: params.offset?.toString(),
+            };
+
+            const response = await this.cachedRequest<{
+                collections: CollectionSearchData[];
+            }>("/collections/search/v1", queryParams, runtime, {
+                ttl: 300, // 5 minutes cache
+                context: "collections_search",
+            });
+
+            console.log(
+                "Raw collections search response:",
+                JSON.stringify(response.collections[0], null, 2)
+            );
+
+            endOperation();
+            return response.collections;
+        } catch (error) {
+            console.error("Error searching collections:", error);
+            this.performanceMonitor.recordMetric({
+                operation: "searchCollections",
+                duration: 0,
+                success: false,
+                metadata: {
+                    error: error.message,
+                    params,
+                },
+            });
+            throw error;
+        }
+    }
+
+    /**
+     * Search for collections with default parameters optimized for discovery
+     * @param query Search query string
+     * @param runtime Agent runtime
+     */
+    async quickSearchCollections(
+        query: string,
+        runtime: IAgentRuntime,
+        options: {
+            chain?: string;
+            limit?: number;
+            includeMetadata?: boolean;
+        } = {}
+    ): Promise<CollectionSearchData[]> {
+        return this.searchCollections(
+            {
+                name: query,
+                chain: options.chain,
+                limit: options.limit || 20,
+                includeMetadata: options.includeMetadata ?? true,
+                includeTopBid: true,
+                includeAttributes: true,
+                includeOwnerCount: true,
+                includeMintStages: true,
+                includeMarketplaces: true,
             },
             runtime
         );
