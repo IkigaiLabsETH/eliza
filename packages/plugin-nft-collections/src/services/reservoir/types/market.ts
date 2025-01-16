@@ -297,3 +297,25 @@ export interface OrderBidData {
     updatedAt: string;
     rawData?: Record<string, any>;
 }
+
+/**
+ * Parameters for fetching orders depth
+ * @see https://docs.reservoir.tools/reference/getordersdepthv1
+ */
+export interface OrdersDepthParams {
+    collection?: string;
+    token?: string;
+    side: "buy" | "sell";
+    includeMetadata?: boolean;
+    normalizeRoyalties?: boolean;
+    currencies?: string[];
+}
+
+/**
+ * Response data for orders depth
+ */
+export interface OrdersDepthData {
+    price: Price;
+    quantity: number;
+    depth: number;
+}

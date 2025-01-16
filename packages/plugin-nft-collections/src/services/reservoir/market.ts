@@ -12,6 +12,8 @@ import {
     OrderAskData,
     OrdersBidsParams,
     OrderBidData,
+    OrdersDepthParams,
+    OrdersDepthData,
 } from "./types";
 
 export class MarketService extends BaseReservoirService {
@@ -406,6 +408,55 @@ export class MarketService extends BaseReservoirService {
             console.error("Error fetching orders bids:", error);
             this.performanceMonitor.recordMetric({
                 operation: "getOrdersBids",
+                duration: 0,
+                success: false,
+                metadata: {
+                    error: error.message,
+                    params,
+                },
+            });
+            throw error;
+        }
+    }
+
+    /**
+     * Get orders depth for a collection or token
+     * @see https://docs.reservoir.tools/reference/getordersdepthv1
+     */
+    async getOrdersDepth(
+        params: OrdersDepthParams,
+        runtime: IAgentRuntime
+    ): Promise<OrdersDepthData[]> {
+        const endOperation = this.performanceMonitor.startOperation(
+            "getOrdersDepth",
+            { params }
+        );
+
+        try {
+            if (!params.collection && !params.token) {
+                throw new Error(
+                    "Either collection or token parameter is required"
+                );
+            }
+
+            const response = await this.cachedRequest<{
+                depth: OrdersDepthData[];
+            }>("/orders/depth/v1", params, runtime, {
+                ttl: 60, // 1 minute cache for depth data
+                context: "orders_depth",
+            });
+
+            console.log(
+                "Raw orders depth response:",
+                JSON.stringify(response.depth[0], null, 2)
+            );
+
+            endOperation();
+            return response.depth;
+        } catch (error) {
+            console.error("Error fetching orders depth:", error);
+            this.performanceMonitor.recordMetric({
+                operation: "getOrdersDepth",
                 duration: 0,
                 success: false,
                 metadata: {
