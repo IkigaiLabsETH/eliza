@@ -10,6 +10,8 @@ import {
     BuyResponse,
     OrdersAsksParams,
     OrderAskData,
+    OrdersBidsParams,
+    OrderBidData,
 } from "./types";
 
 export class MarketService extends BaseReservoirService {
@@ -354,6 +356,56 @@ export class MarketService extends BaseReservoirService {
             console.error("Error fetching orders asks:", error);
             this.performanceMonitor.recordMetric({
                 operation: "getOrdersAsks",
+                duration: 0,
+                success: false,
+                metadata: {
+                    error: error.message,
+                    params,
+                },
+            });
+            throw error;
+        }
+    }
+
+    /**
+     * Get bids (offers) with various filter options
+     * @see https://docs.reservoir.tools/reference/getordersbidsv6
+     */
+    async getOrdersBids(
+        params: OrdersBidsParams,
+        runtime: IAgentRuntime
+    ): Promise<{
+        bids: OrderBidData[];
+        continuation?: string;
+    }> {
+        const endOperation = this.performanceMonitor.startOperation(
+            "getOrdersBids",
+            { params }
+        );
+
+        try {
+            const response = await this.cachedRequest<{
+                orders: OrderBidData[];
+                continuation?: string;
+            }>("/orders/bids/v6", params, runtime, {
+                ttl: 60, // 1 minute cache for bids
+                context: "orders_bids",
+            });
+
+            console.log(
+                "Raw orders bids response:",
+                JSON.stringify(response.orders[0], null, 2)
+            );
+
+            endOperation();
+            return {
+                bids: response.orders,
+                continuation: response.continuation,
+            };
+        } catch (error) {
+            console.error("Error fetching orders bids:", error);
+            this.performanceMonitor.recordMetric({
+                operation: "getOrdersBids",
                 duration: 0,
                 success: false,
                 metadata: {

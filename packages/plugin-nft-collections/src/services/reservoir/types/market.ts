@@ -218,3 +218,82 @@ export interface OrderAskData {
     updatedAt: string;
     rawData?: Record<string, any>;
 }
+
+/**
+ * Parameters for fetching bids (offers)
+ * @see https://docs.reservoir.tools/reference/getordersbidsv6
+ */
+export interface OrdersBidsParams {
+    token?: string;
+    tokenSetId?: string;
+    maker?: string;
+    community?: string;
+    collection?: string;
+    attributes?: Record<string, string>;
+    status?: "active" | "inactive" | "expired" | "cancelled" | "filled";
+    sortBy?: "price" | "createdAt" | "updatedAt";
+    sortDirection?: "asc" | "desc";
+    continuation?: string;
+    limit?: number;
+    includeMetadata?: boolean;
+    includeRawData?: boolean;
+    includeDynamicPricing?: boolean;
+    normalizeRoyalties?: boolean;
+    currencies?: string[];
+    excludeEOA?: boolean;
+}
+
+/**
+ * Response data for a bid (offer)
+ */
+export interface OrderBidData {
+    id: string;
+    kind: string;
+    side: "buy";
+    status: "active" | "inactive" | "expired" | "cancelled" | "filled";
+    tokenSetId: string;
+    tokenSetSchemaHash: string;
+    contract: string;
+    maker: string;
+    taker?: string;
+    price: Price & {
+        netAmount: {
+            raw: string;
+            decimal: number;
+            usd: number;
+            native: number;
+        };
+    };
+    validFrom: number;
+    validUntil: number;
+    quantityFilled: number;
+    quantityRemaining: number;
+    criteria?: {
+        kind: string;
+        data: {
+            token?: {
+                tokenId: string;
+                name?: string;
+                image?: string;
+            };
+            collection?: TokenCollection & {
+                royalties?: Array<{
+                    bps: number;
+                    recipient: string;
+                }>;
+            };
+        };
+    };
+    source?: Source;
+    feeBps?: number;
+    feeBreakdown?: Array<{
+        bps: number;
+        kind: string;
+        recipient: string;
+    }>;
+    expiration: number;
+    isReservoir?: boolean;
+    createdAt: string;
+    updatedAt: string;
+    rawData?: Record<string, any>;
+}
