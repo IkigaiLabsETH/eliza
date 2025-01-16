@@ -54,3 +54,32 @@ export interface StatsData {
         [key: string]: any;
     };
 }
+
+/**
+ * Parameters for fetching daily collection volumes
+ * @see https://docs.reservoir.tools/reference/getcollectionsdailyvolumesv1
+ */
+export interface DailyVolumesParams {
+    startTimestamp?: number;
+    endTimestamp?: number;
+    limit?: number;
+    continuation?: string;
+    sortBy?: "volume" | "rank" | "date";
+    sortDirection?: "asc" | "desc";
+}
+
+/**
+ * Response data for daily collection volumes
+ */
+export interface DailyVolumeData {
+    collections: Array<{
+        id: string;
+        name: string;
+        image: string;
+        date: string;
+        volume: number;
+        rank: number;
+        salesCount: number;
+    }>;
+    continuation?: string;
+}
