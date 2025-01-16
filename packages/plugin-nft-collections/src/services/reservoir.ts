@@ -787,6 +787,78 @@ interface TokenActivityData {
     metadata?: Record<string, any>;
 }
 
+// Collection activity interfaces
+interface CollectionActivityParams {
+    collection: string;
+    limit?: number;
+    continuation?: string;
+    types?: Array<
+        | "sale"
+        | "ask"
+        | "transfer"
+        | "mint"
+        | "bid"
+        | "bid_cancel"
+        | "ask_cancel"
+    >;
+    includeMetadata?: boolean;
+    includeTokenMetadata?: boolean;
+    sortBy?: "timestamp";
+    sortDirection?: "asc" | "desc";
+}
+
+interface CollectionActivityData {
+    id: string;
+    type:
+        | "sale"
+        | "ask"
+        | "transfer"
+        | "mint"
+        | "bid"
+        | "bid_cancel"
+        | "ask_cancel";
+    fromAddress: string;
+    toAddress?: string;
+    price?: {
+        currency: {
+            contract: string;
+            name: string;
+            symbol: string;
+            decimals: number;
+        };
+        amount: {
+            raw: string;
+            decimal: number;
+            usd: number;
+            native: number;
+        };
+    };
+    amount?: number;
+    timestamp: number;
+    token: {
+        contract: string;
+        tokenId: string;
+        name?: string;
+        image?: string;
+        collection: {
+            id: string;
+            name: string;
+            image?: string;
+            slug?: string;
+        };
+    };
+    order?: {
+        id: string;
+        side: "ask" | "bid";
+        source?: {
+            domain: string;
+            name: string;
+            icon: string;
+        };
+    };
+    metadata?: Record<string, any>;
+}
+
 export class ReservoirService {
     private cacheManager?: MemoryCacheManager;
     private rateLimiter?: RateLimiter;
@@ -2749,6 +2821,114 @@ export class ReservoirService {
                 limit: options.limit || 20,
                 continuation: options.continuation,
                 includeMetadata: true,
+                sortBy: "timestamp",
+                sortDirection: "desc",
+            },
+            runtime
+        );
+    }
+
+    /**
+     * Get collection activity feed including sales, asks, transfers, mints, bids, and cancellations
+     * @see https://docs.reservoir.tools/reference/getcollectionsactivityv6
+     *
+     * @param params Configuration options for the collection activity request
+     * @param runtime Agent runtime for API key management
+     * @returns Array of collection activity data with continuation token for pagination
+     */
+    async getCollectionActivity(
+        params: CollectionActivityParams,
+        runtime: IAgentRuntime
+    ): Promise<{
+        activities: CollectionActivityData[];
+        continuation?: string;
+    }> {
+        const endOperation = this.performanceMonitor.startOperation(
+            "getCollectionActivity",
+            { params }
+        );
+
+        try {
+            if (!params.collection) {
+                throw new Error("Collection parameter is required");
+            }
+
+            const queryParams = {
+                collection: params.collection,
+                limit: params.limit?.toString(),
+                continuation: params.continuation,
+                types: params.types?.join(","),
+                includeMetadata: params.includeMetadata ? "true" : undefined,
+                includeTokenMetadata: params.includeTokenMetadata
+                    ? "true"
+                    : undefined,
+                sortBy: params.sortBy || "timestamp",
+                sortDirection: params.sortDirection || "desc",
+            };
+
+            const response = await this.cachedRequest<{
+                activities: CollectionActivityData[];
+                continuation?: string;
+            }>("/collections/activity/v6", queryParams, runtime, {
+                ttl: 300, // 5 minutes cache
+                context: "collection_activity",
+            });
+
+            console.log(
+                "Raw collection activity response:",
+                JSON.stringify(response.activities[0], null, 2)
+            );
+
+            endOperation();
+            return response;
+        } catch (error) {
+            console.error("Error fetching collection activity:", error);
+            this.performanceMonitor.recordMetric({
+                operation: "getCollectionActivity",
+                duration: 0,
+                success: false,
+                metadata: {
+                    error: error.message,
+                    params,
+                },
+            });
+            throw error;
+        }
+    }
+
+    /**
+     * Get collection activity with default parameters optimized for discovery
+     * @param collection Collection ID/address
+     * @param runtime Agent runtime
+     */
+    async getCollectionActivityFeed(
+        collection: string,
+        runtime: IAgentRuntime,
+        options: {
+            types?: Array<
+                | "sale"
+                | "ask"
+                | "transfer"
+                | "mint"
+                | "bid"
+                | "bid_cancel"
+                | "ask_cancel"
+            >;
+            limit?: number;
+            continuation?: string;
+        } = {}
+    ): Promise<{
+        activities: CollectionActivityData[];
+        continuation?: string;
+    }> {
+        return this.getCollectionActivity(
+            {
+                collection,
+                types: options.types,
+                limit: options.limit || 20,
+                continuation: options.continuation,
+                includeMetadata: true,
+                includeTokenMetadata: true,
                 sortBy: "timestamp",
                 sortDirection: "desc",
             },
