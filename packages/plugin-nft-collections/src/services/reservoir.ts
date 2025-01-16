@@ -4000,4 +4000,27 @@ export class ReservoirService {
 
         return `${this.config.baseUrl}/redirect/sources/${source}/logo/v2`;
     }
+
+    /**
+     * Get the token page URL for a specific token on a marketplace
+     * @see https://docs.reservoir.tools/reference/getredirectsourcessourcetokenstokenlinkv2
+     *
+     * @param source Source/marketplace ID (e.g., 'opensea', 'blur', etc.)
+     * @param collection Collection address
+     * @param tokenId Token ID
+     * @returns The direct URL to the token's page on the specified marketplace
+     */
+    getSourceTokenUrl(
+        source: string,
+        collection: string,
+        tokenId: string
+    ): string {
+        if (!source || !collection || !tokenId) {
+            throw new Error(
+                "Source, collection, and tokenId parameters are required"
+            );
+        }
+
+        return `${this.config.baseUrl}/redirect/sources/${source}/tokens/${collection}:${tokenId}/link/v2`;
+    }
 }
