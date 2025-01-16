@@ -859,6 +859,124 @@ interface CollectionActivityData {
     metadata?: Record<string, any>;
 }
 
+// User tokens interfaces
+interface UserTokensParams {
+    user: string;
+    collection?: string;
+    community?: string;
+    limit?: number;
+    continuation?: string;
+    includeTopBid?: boolean;
+    includeAttributes?: boolean;
+    includeLastSale?: boolean;
+    includeRawData?: boolean;
+    sortBy?: "acquiredAt" | "lastAppraisalValue" | "tokenId";
+    sortDirection?: "asc" | "desc";
+}
+
+interface UserTokensData {
+    tokens: Array<{
+        token: {
+            contract: string;
+            tokenId: string;
+            name?: string;
+            description?: string;
+            image?: string;
+            media?: string;
+            kind?: string;
+            isFlagged?: boolean;
+            lastFlagUpdate?: string;
+            rarity?: number;
+            rarityRank?: number;
+            collection?: {
+                id: string;
+                name: string;
+                image?: string;
+                slug?: string;
+            };
+            attributes?: Array<{
+                key: string;
+                value: string;
+                tokenCount?: number;
+                onSaleCount?: number;
+                floorAskPrice?: number;
+                topBidValue?: number;
+            }>;
+            lastSale?: {
+                price: number;
+                timestamp: string;
+            };
+        };
+        ownership: {
+            tokenCount: number;
+            onSaleCount: number;
+            floorAsk?: {
+                id: string;
+                price: number;
+                maker: string;
+                validFrom: number;
+                validUntil: number;
+                source?: {
+                    id: string;
+                    name: string;
+                    icon: string;
+                    url: string;
+                };
+            };
+            acquiredAt?: string;
+        };
+        market?: {
+            floorAsk?: {
+                id: string;
+                price: {
+                    currency: {
+                        contract: string;
+                        name: string;
+                        symbol: string;
+                        decimals: number;
+                    };
+                    amount: {
+                        raw: string;
+                        decimal: number;
+                        usd: number;
+                        native: number;
+                    };
+                };
+                maker: string;
+                validFrom: number;
+                validUntil: number;
+                source?: {
+                    id: string;
+                    name: string;
+                    icon: string;
+                    url: string;
+                };
+            };
+            topBid?: {
+                id: string;
+                price: {
+                    currency: {
+                        contract: string;
+                        name: string;
+                        symbol: string;
+                        decimals: number;
+                    };
+                    amount: {
+                        raw: string;
+                        decimal: number;
+                        usd: number;
+                        native: number;
+                    };
+                };
+                maker: string;
+                validFrom: number;
+                validUntil: number;
+            };
+        };
+    }>;
+    continuation?: string;
+}
+
 export class ReservoirService {
     private cacheManager?: MemoryCacheManager;
     private rateLimiter?: RateLimiter;
@@ -2930,6 +3048,106 @@ export class ReservoirService {
                 includeMetadata: true,
                 includeTokenMetadata: true,
                 sortBy: "timestamp",
+                sortDirection: "desc",
+            },
+            runtime
+        );
+    }
+
+    /**
+     * Get tokens held by a user along with ownership information
+     * @see https://docs.reservoir.tools/reference/getusersusertokensv10
+     *
+     * @param params Configuration options for the user tokens request
+     * @param runtime Agent runtime for API key management
+     * @returns Array of user token data with continuation token for pagination
+     */
+    async getUserTokens(
+        params: UserTokensParams,
+        runtime: IAgentRuntime
+    ): Promise<UserTokensData> {
+        const endOperation = this.performanceMonitor.startOperation(
+            "getUserTokens",
+            { params }
+        );
+
+        try {
+            if (!params.user) {
+                throw new Error("User address is required");
+            }
+
+            const queryParams = {
+                collection: params.collection,
+                community: params.community,
+                limit: params.limit?.toString(),
+                continuation: params.continuation,
+                includeTopBid: params.includeTopBid ? "true" : undefined,
+                includeAttributes: params.includeAttributes
+                    ? "true"
+                    : undefined,
+                includeLastSale: params.includeLastSale ? "true" : undefined,
+                includeRawData: params.includeRawData ? "true" : undefined,
+                sortBy: params.sortBy || "acquiredAt",
+                sortDirection: params.sortDirection || "desc",
+            };
+
+            const response = await this.cachedRequest<UserTokensData>(
+                `/users/${params.user}/tokens/v10`,
+                queryParams,
+                runtime,
+                {
+                    ttl: 300, // 5 minutes cache
+                    context: "user_tokens",
+                }
+            );
+
+            console.log(
+                "Raw user tokens response:",
+                JSON.stringify(response.tokens[0], null, 2)
+            );
+
+            endOperation();
+            return response;
+        } catch (error) {
+            console.error("Error fetching user tokens:", error);
+            this.performanceMonitor.recordMetric({
+                operation: "getUserTokens",
+                duration: 0,
+                success: false,
+                metadata: {
+                    error: error.message,
+                    params,
+                },
+            });
+            throw error;
+        }
+    }
+
+    /**
+     * Get user tokens with default parameters optimized for discovery
+     * @param userAddress User's wallet address
+     * @param runtime Agent runtime
+     */
+    async getUserTokensFeed(
+        userAddress: string,
+        runtime: IAgentRuntime,
+        options: {
+            collection?: string;
+            limit?: number;
+            continuation?: string;
+            sortBy?: "acquiredAt" | "lastAppraisalValue" | "tokenId";
+        } = {}
+    ): Promise<UserTokensData> {
+        return this.getUserTokens(
+            {
+                user: userAddress,
+                collection: options.collection,
+                limit: options.limit || 20,
+                continuation: options.continuation,
+                includeTopBid: true,
+                includeAttributes: true,
+                includeLastSale: true,
+                sortBy: options.sortBy || "acquiredAt",
                 sortDirection: "desc",
             },
             runtime
