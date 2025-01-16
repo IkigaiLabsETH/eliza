@@ -494,6 +494,76 @@ interface TrendingMintData extends CollectionSearchData {
     };
 }
 
+// Collection bids interfaces
+interface CollectionBidsParams {
+    collection: string;
+    sortBy?: "price" | "createdAt";
+    sortDirection?: "asc" | "desc";
+    normalizeRoyalties?: boolean;
+    includeCriteriaMetadata?: boolean;
+    includeRawData?: boolean;
+    includeDynamicPricing?: boolean;
+    startTimestamp?: number;
+    endTimestamp?: number;
+    currencies?: string[];
+    limit?: number;
+    offset?: number;
+}
+
+interface CollectionBidData extends TokenBidData {
+    criteria?: TokenBidData["criteria"] & {
+        data: {
+            collection: {
+                id: string;
+                name: string;
+                image?: string;
+                slug?: string;
+                royalties?: {
+                    bps: number;
+                    recipient: string;
+                };
+            };
+            attributes?: Array<{
+                key: string;
+                value: string;
+            }>;
+        };
+    };
+}
+
+// Top traders interfaces
+interface TopTradersParams {
+    collection: string;
+    period?: "1h" | "6h" | "24h" | "7d" | "30d";
+    sortBy?: "purchases" | "sales" | "profit" | "volume";
+    limit?: number;
+    offset?: number;
+    includeMetadata?: boolean;
+    excludeZeroVolume?: boolean;
+}
+
+interface TopTraderData {
+    user: {
+        address: string;
+        name?: string;
+        avatar?: string;
+    };
+    stats: {
+        purchases: {
+            count: number;
+            volume: number;
+        };
+        sales: {
+            count: number;
+            volume: number;
+        };
+        profit: number;
+        totalVolume: number;
+        rank?: number;
+    };
+    period: string;
+}
+
 export class ReservoirService {
     private cacheManager?: MemoryCacheManager;
     private rateLimiter?: RateLimiter;
@@ -1962,6 +2032,200 @@ export class ReservoirService {
                 includeOwnerCount: true,
                 includeMintStages: true,
                 includeMarketplaces: true,
+            },
+            runtime
+        );
+    }
+
+    /**
+     * Get a list of bids (offers) for a specific collection
+     * @see https://docs.reservoir.tools/reference/getcollectionscollectionidbidsv1
+     *
+     * @param params Configuration options for the collection bids request
+     * @param runtime Agent runtime for API key management
+     * @returns Array of collection bid data with pricing information
+     */
+    async getCollectionBids(
+        params: CollectionBidsParams,
+        runtime: IAgentRuntime
+    ): Promise<CollectionBidData[]> {
+        const endOperation = this.performanceMonitor.startOperation(
+            "getCollectionBids",
+            { params }
+        );
+
+        try {
+            if (!params.collection) {
+                throw new Error("Collection parameter is required");
+            }
+
+            const queryParams = {
+                sortBy: params.sortBy || "price",
+                sortDirection: params.sortDirection || "desc",
+                normalizeRoyalties: params.normalizeRoyalties
+                    ? "true"
+                    : undefined,
+                includeCriteriaMetadata: params.includeCriteriaMetadata
+                    ? "true"
+                    : undefined,
+                includeRawData: params.includeRawData ? "true" : undefined,
+                includeDynamicPricing: params.includeDynamicPricing
+                    ? "true"
+                    : undefined,
+                startTimestamp: params.startTimestamp?.toString(),
+                endTimestamp: params.endTimestamp?.toString(),
+                currencies: params.currencies?.join(","),
+                limit: params.limit?.toString(),
+                offset: params.offset?.toString(),
+            };
+
+            const response = await this.cachedRequest<{
+                bids: CollectionBidData[];
+            }>(
+                `/collections/${params.collection}/bids/v1`,
+                queryParams,
+                runtime,
+                {
+                    ttl: 300, // 5 minutes cache
+                    context: "collection_bids",
+                }
+            );
+
+            console.log(
+                "Raw collection bids response:",
+                JSON.stringify(response.bids[0], null, 2)
+            );
+
+            endOperation();
+            return response.bids;
+        } catch (error) {
+            console.error("Error fetching collection bids:", error);
+            this.performanceMonitor.recordMetric({
+                operation: "getCollectionBids",
+                duration: 0,
+                success: false,
+                metadata: {
+                    error: error.message,
+                    params,
+                },
+            });
+            throw error;
+        }
+    }
+
+    /**
+     * Get collection offers with default parameters optimized for discovery
+     * @param collection Collection ID/address
+     * @param runtime Agent runtime
+     */
+    async getCollectionOffers(
+        collection: string,
+        runtime: IAgentRuntime,
+        options: {
+            sortBy?: "price" | "createdAt";
+            sortDirection?: "asc" | "desc";
+            normalizeRoyalties?: boolean;
+            currencies?: string[];
+            limit?: number;
+        } = {}
+    ): Promise<CollectionBidData[]> {
+        return this.getCollectionBids(
+            {
+                collection,
+                sortBy: options.sortBy || "price",
+                sortDirection: options.sortDirection || "desc",
+                normalizeRoyalties: options.normalizeRoyalties,
+                includeCriteriaMetadata: true,
+                includeRawData: true,
+                includeDynamicPricing: true,
+                currencies: options.currencies,
+                limit: options.limit || 20,
+            },
+            runtime
+        );
+    }
+
+    /**
+     * Get top traders for a specific collection
+     * @see https://docs.reservoir.tools/reference/getcollectionstoptradersv1
+     *
+     * @param params Configuration options for the top traders request
+     * @param runtime Agent runtime for API key management
+     * @returns Array of top trader data with trading metrics
+     */
+    async getTopTraders(
+        params: TopTradersParams,
+        runtime: IAgentRuntime
+    ): Promise<TopTraderData[]> {
+        const endOperation = this.performanceMonitor.startOperation(
+            "getTopTraders",
+            { params }
+        );
+
+        try {
+            const queryParams = {
+                collection: params.collection,
+                period: params.period || "24h",
+                sortBy: params.sortBy || "purchases",
+                limit: params.limit?.toString(),
+                offset: params.offset?.toString(),
+                includeMetadata: params.includeMetadata ? "true" : undefined,
+                excludeZeroVolume: params.excludeZeroVolume
+                    ? "true"
+                    : undefined,
+            };
+
+            const response = await this.cachedRequest<{
+                traders: TopTraderData[];
+            }>("/collections/top-traders/v1", queryParams, runtime, {
+                ttl: 300, // 5 minutes cache
+                context: "top_traders",
+            });
+
+            console.log(
+                "Raw top traders response:",
+                JSON.stringify(response.traders[0], null, 2)
+            );
+
+            endOperation();
+            return response.traders;
+        } catch (error) {
+            console.error("Error fetching top traders:", error);
+            this.performanceMonitor.recordMetric({
+                operation: "getTopTraders",
+                duration: 0,
+                success: false,
+                metadata: {
+                    error: error.message,
+                    params,
+                },
+            });
+            throw error;
+        }
+    }
+
+    /**
+     * Get top traders with default parameters optimized for discovery
+     * @param collection Collection ID/address
+     * @param runtime Agent runtime
+     */
+    async getCollectionTopTraders(
+        collection: string,
+        runtime: IAgentRuntime,
+        options: {
+            period?: "1h" | "6h" | "24h" | "7d" | "30d";
+            sortBy?: "purchases" | "sales" | "profit" | "volume";
+            limit?: number;
+        } = {}
+    ): Promise<TopTraderData[]> {
+        return this.getTopTraders(
+            {
+                collection,
+                period: options.period || "24h",
+                sortBy: options.sortBy || "volume",
+                limit: options.limit || 20,
+                includeMetadata: true,
+                excludeZeroVolume: true,
             },
             runtime
         );
