@@ -440,6 +440,60 @@ interface TrendingCollectionData extends CollectionSearchData {
     };
 }
 
+// Trending mints interfaces
+interface TrendingMintsParams {
+    period?: "1h" | "6h" | "24h" | "7d" | "30d";
+    limit?: number;
+    offset?: number;
+    chain?: string;
+    includeMetadata?: boolean;
+    includeAttributes?: boolean;
+    includeOwnerCount?: boolean;
+    includeMintStages?: boolean;
+    includeMarketplaces?: boolean;
+}
+
+interface TrendingMintData extends CollectionSearchData {
+    collection: CollectionSearchData["collection"] & {
+        mintStats?: {
+            "1h"?: {
+                count: number;
+                value: number;
+            };
+            "6h"?: {
+                count: number;
+                value: number;
+            };
+            "24h"?: {
+                count: number;
+                value: number;
+            };
+            "7d"?: {
+                count: number;
+                value: number;
+            };
+            "30d"?: {
+                count: number;
+                value: number;
+            };
+        };
+        mintPrice?: {
+            amount: {
+                raw: string;
+                decimal: number;
+                usd: number;
+                native: number;
+            };
+            currency: {
+                contract: string;
+                name: string;
+                symbol: string;
+                decimals: number;
+            };
+        };
+    };
+}
+
 export class ReservoirService {
     private cacheManager?: MemoryCacheManager;
     private rateLimiter?: RateLimiter;
@@ -1810,6 +1864,100 @@ export class ReservoirService {
                 chain: options.chain,
                 includeMetadata: true,
                 includeTopBid: true,
+                includeAttributes: true,
+                includeOwnerCount: true,
+                includeMintStages: true,
+                includeMarketplaces: true,
+            },
+            runtime
+        );
+    }
+
+    /**
+     * Get trending mints across multiple chains
+     * @see https://docs.reservoir.tools/reference/getcollectionstrendingmintsv2
+     *
+     * @param params Configuration options for the trending mints request
+     * @param runtime Agent runtime for API key management
+     * @returns Array of trending mint data with mint metrics
+     */
+    async getTrendingMints(
+        params: TrendingMintsParams,
+        runtime: IAgentRuntime
+    ): Promise<TrendingMintData[]> {
+        const endOperation = this.performanceMonitor.startOperation(
+            "getTrendingMints",
+            { params }
+        );
+
+        try {
+            const queryParams = {
+                period: params.period || "24h",
+                limit: params.limit?.toString(),
+                offset: params.offset?.toString(),
+                chain: params.chain,
+                includeMetadata: params.includeMetadata ? "true" : undefined,
+                includeAttributes: params.includeAttributes
+                    ? "true"
+                    : undefined,
+                includeOwnerCount: params.includeOwnerCount
+                    ? "true"
+                    : undefined,
+                includeMintStages: params.includeMintStages
+                    ? "true"
+                    : undefined,
+                includeMarketplaces: params.includeMarketplaces
+                    ? "true"
+                    : undefined,
+            };
+
+            const response = await this.cachedRequest<{
+                collections: TrendingMintData[];
+            }>("/collections/trending-mints/v2", queryParams, runtime, {
+                ttl: 300, // 5 minutes cache
+                context: "trending_mints",
+            });
+
+            console.log(
+                "Raw trending mints response:",
+                JSON.stringify(response.collections[0], null, 2)
+            );
+
+            endOperation();
+            return response.collections;
+        } catch (error) {
+            console.error("Error fetching trending mints:", error);
+            this.performanceMonitor.recordMetric({
+                operation: "getTrendingMints",
+                duration: 0,
+                success: false,
+                metadata: {
+                    error: error.message,
+                    params,
+                },
+            });
+            throw error;
+        }
+    }
+
+    /**
+     * Get hot mints with default parameters optimized for discovery
+     * @param runtime Agent runtime
+     */
+    async getHotMints(
+        runtime: IAgentRuntime,
+        options: {
+            chain?: string;
+            period?: "1h" | "6h" | "24h" | "7d" | "30d";
+            limit?: number;
+        } = {}
+    ): Promise<TrendingMintData[]> {
+        return this.getTrendingMints(
+            {
+                period: options.period || "24h",
+                limit: options.limit || 20,
+                chain: options.chain,
+                includeMetadata: true,
                 includeAttributes: true,
                 includeOwnerCount: true,
                 includeMintStages: true,
