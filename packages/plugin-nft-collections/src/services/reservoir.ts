@@ -3970,4 +3970,19 @@ export class ReservoirService {
 
         return `${this.config.baseUrl}/redirect/tokens/${collection}:${tokenId}/image/v1`;
     }
+
+    /**
+     * Get the icon URL for a currency address
+     * @see https://docs.reservoir.tools/reference/getredirectcurrencyaddressiconv1
+     *
+     * @param currencyAddress Currency contract address
+     * @returns The direct URL to the currency's icon
+     */
+    getCurrencyIconUrl(currencyAddress: string): string {
+        if (!currencyAddress) {
+            throw new Error("Currency address parameter is required");
+        }
+
+        return `${this.config.baseUrl}/redirect/currency/${currencyAddress}/icon/v1`;
+    }
 }
