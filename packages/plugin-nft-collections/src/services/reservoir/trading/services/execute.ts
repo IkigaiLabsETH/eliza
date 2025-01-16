@@ -96,6 +96,10 @@ export interface CrossPostingOrderResponse {
     }>;
 }
 
+export interface TransactionSyncedResponse {
+    synced: boolean;
+}
+
 /**
  * Service for executing NFT orders
  * @see https://docs.reservoir.tools/reference/creating-and-filling-orders
@@ -484,5 +488,54 @@ export class ExecuteService extends BaseTradingService {
             `/cross-posting-orders/v1?${queryParams.toString()}`,
             runtime
         );
+    }
+
+    /**
+     * Check if a transaction has been synced
+     * @see https://docs.reservoir.tools/reference/gettransactionssyncedv2
+     *
+     * @example
+     * ```typescript
+     * // Check if a transaction is synced
+     * const response = await executeService.checkTransactionSynced({
+     *   txHash: "0x...", // transaction hash
+     * }, runtime);
+     * ```
+     */
+    async checkTransactionSynced(
+        params: { txHash: string },
+        runtime: IAgentRuntime
+    ): Promise<TransactionSyncedResponse> {
+        if (!params.txHash) {
+            throw new Error("Transaction hash is required");
+        }
+
+        return this.get(
+            `/transactions/synced/v2?txHash=${params.txHash}`,
+            runtime
+        );
+    }
+
+    /**
+     * Check if a specific transaction has been synced (alternative endpoint)
+     * @see https://docs.reservoir.tools/reference/gettransactionstxhashsyncedv1
+     *
+     * @example
+     * ```typescript
+     * // Check if a transaction is synced using alternative endpoint
+     * const response = await executeService.checkTransactionSyncedV1({
+     *   txHash: "0x...", // transaction hash
+     * }, runtime);
+     * ```
+     */
+    async checkTransactionSyncedV1(
+        params: { txHash: string },
+        runtime: IAgentRuntime
+    ): Promise<TransactionSyncedResponse> {
+        if (!params.txHash) {
+            throw new Error("Transaction hash is required");
+        }
+
+        return this.get(`/transactions/${params.txHash}/synced/v1`, runtime);
     }
 }
