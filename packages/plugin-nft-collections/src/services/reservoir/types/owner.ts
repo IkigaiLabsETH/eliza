@@ -125,3 +125,33 @@ export interface CommonCollectionData {
         percentage: number;
     };
 }
+
+/**
+ * Parameters for fetching owners intersection across collections
+ * @see https://docs.reservoir.tools/reference/getownerscrosscollectionsv1
+ */
+export interface OwnersIntersectionParams {
+    collections: string[];
+    limit?: number;
+    offset?: number;
+    sortBy?: "ownershipScore" | "created";
+    sortDirection?: "asc" | "desc";
+}
+
+/**
+ * Response data for owners intersection
+ */
+export interface OwnersIntersectionData {
+    address: string;
+    ownership: {
+        tokenCount: number;
+        collections: Array<{
+            id: string;
+            name: string;
+            image?: string;
+            tokenCount: number;
+            ownershipScore: number;
+        }>;
+        ownershipScore: number;
+    };
+}

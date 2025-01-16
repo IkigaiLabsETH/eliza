@@ -6,6 +6,8 @@ import {
     CommonCollectionData,
     OwnersParams,
     OwnerData,
+    OwnersIntersectionParams,
+    OwnersIntersectionData,
 } from "./types/owner";
 
 export class OwnerService extends BaseReservoirService {
@@ -101,6 +103,61 @@ export class OwnerService extends BaseReservoirService {
             console.error("Error fetching owners:", error);
             this.performanceMonitor.recordMetric({
                 operation: "getOwners",
+                duration: 0,
+                success: false,
+                metadata: {
+                    error: error.message,
+                    params,
+                },
+            });
+            throw error;
+        }
+    }
+
+    /**
+     * Get owners who own tokens across multiple collections
+     * @see https://docs.reservoir.tools/reference/getownerscrosscollectionsv1
+     *
+     * @param params Parameters for fetching owners intersection
+     * @param runtime Agent runtime for making requests
+     * @returns Array of owners with their ownership details across collections
+     */
+    async getOwnersIntersection(
+        params: OwnersIntersectionParams,
+        runtime: IAgentRuntime
+    ): Promise<{
+        owners: OwnersIntersectionData[];
+        continuation?: string;
+    }> {
+        if (!params.collections || params.collections.length === 0) {
+            throw new Error("At least one collection is required");
+        }
+
+        const endOperation = this.performanceMonitor.startOperation(
+            "getOwnersIntersection",
+            { params }
+        );
+
+        try {
+            const response = await this.cachedRequest<{
+                owners: OwnersIntersectionData[];
+                continuation?: string;
+            }>("/owners/cross-collections/v1", params, runtime, {
+                ttl: 300, // Cache for 5 minutes
+                context: "owners_intersection",
+            });
+
+            console.log(
+                "Raw owners intersection response:",
+                JSON.stringify(response.owners[0], null, 2)
+            );
+
+            endOperation();
+            return response;
+        } catch (error) {
+            console.error("Error fetching owners intersection:", error);
+            this.performanceMonitor.recordMetric({
+                operation: "getOwnersIntersection",
                 duration: 0,
                 success: false,
                 metadata: {
