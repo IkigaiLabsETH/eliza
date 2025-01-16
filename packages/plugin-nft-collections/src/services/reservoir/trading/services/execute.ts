@@ -100,6 +100,30 @@ export interface TransactionSyncedResponse {
     synced: boolean;
 }
 
+export interface SignedOrderParams {
+    orders: Array<{
+        kind: string;
+        data: Record<string, any>;
+    }>;
+    source?: string;
+    orderbook?: "reservoir" | "opensea" | "looks-rare" | "x2y2" | "blur";
+    isBundle?: boolean;
+    normalizeRoyalties?: boolean;
+    replaceOrderId?: string;
+}
+
+export interface SignedOrderResponse {
+    orders: Array<{
+        orderId: string;
+        status: "success" | "failed";
+        crossPostingOrderId?: string;
+        errors?: Array<{
+            message: string;
+            orderbook?: string;
+        }>;
+    }>;
+}
+
 /**
  * Service for executing NFT orders
  * @see https://docs.reservoir.tools/reference/creating-and-filling-orders
@@ -537,5 +561,85 @@ export class ExecuteService extends BaseTradingService {
         }
 
         return this.get(`/transactions/${params.txHash}/synced/v1`, runtime);
+    }
+
+    /**
+     * Submit pre-signed orders to Reservoir
+     * @see https://docs.reservoir.tools/reference/postorderv4
+     *
+     * @example
+     * ```typescript
+     * // Submit a single signed order
+     * const response = await executeService.submitSignedOrders({
+     *   orders: [{
+     *     kind: "seaport",
+     *     data: {
+     *       // Seaport order data
+     *       parameters: {},
+     *       signature: "0x..."
+     *     }
+     *   }],
+     *   source: "ikigai",
+     *   orderbook: "reservoir"
+     * }, runtime);
+     *
+     * // Submit multiple signed orders
+     * const response = await executeService.submitSignedOrders({
+     *   orders: [
+     *     {
+     *       kind: "seaport",
+     *       data: {
+     *         parameters: {},
+     *         signature: "0x..."
+     *       }
+     *     },
+     *     {
+     *       kind: "looks-rare",
+     *       data: {
+     *         parameters: {},
+     *         signature: "0x..."
+     *       }
+     *     }
+     *   ],
+     *   source: "ikigai",
+     *   normalizeRoyalties: true
+     * }, runtime);
+     * ```
+     */
+    async submitSignedOrders(
+        params: SignedOrderParams,
+        runtime: IAgentRuntime
+    ): Promise<SignedOrderResponse> {
+        // Validate required parameters
+        if (!params.orders?.length) {
+            throw new Error("At least one order is required");
+        }
+
+        // Validate each order has required fields
+        params.orders.forEach((order, index) => {
+            if (!order.kind) {
+                throw new Error(
+                    `Order kind is required for order at index ${index}`
+                );
+            }
+            if (!order.data || Object.keys(order.data).length === 0) {
+                throw new Error(
+                    `Order data is required for order at index ${index}`
+                );
+            }
+        });
+
+        // Set recommended defaults
+        const enhancedParams = {
+            ...params,
+            source: params.source ?? "ikigai",
+        };
+
+        return this.executeOrder(
+            "/order/v4",
+            enhancedParams,
+            "submitSignedOrders",
+            runtime
+        );
     }
 }
