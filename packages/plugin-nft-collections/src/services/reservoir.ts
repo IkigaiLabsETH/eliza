@@ -1069,6 +1069,94 @@ interface UserTokensData {
     continuation?: string;
 }
 
+// User collections interfaces
+interface UserCollectionsParams {
+    user: string;
+    community?: string;
+    includeTopBid?: boolean;
+    includeLiquidCount?: boolean;
+    includeAttributes?: boolean;
+    includeLastSale?: boolean;
+    includeOwnerCount?: boolean;
+    includeFlaggedTokens?: boolean;
+    sortBy?:
+        | "totalValue"
+        | "floorAskPrice"
+        | "tokenCount"
+        | "lastBuy"
+        | "lastSell";
+    sortDirection?: "asc" | "desc";
+    offset?: number;
+    limit?: number;
+}
+
+interface UserCollectionsData {
+    collections: Array<{
+        collection: {
+            id: string;
+            name: string;
+            image?: string;
+            banner?: string;
+            description?: string;
+            slug?: string;
+            creator?: string;
+            tokenCount?: number;
+            ownerCount?: number;
+            floorAsk?: {
+                id: string;
+                price: {
+                    currency: {
+                        contract: string;
+                        name: string;
+                        symbol: string;
+                        decimals: number;
+                    };
+                    amount: {
+                        raw: string;
+                        decimal: number;
+                        usd: number;
+                        native: number;
+                    };
+                };
+            };
+            topBid?: {
+                id: string;
+                price: {
+                    currency: {
+                        contract: string;
+                        name: string;
+                        symbol: string;
+                        decimals: number;
+                    };
+                    amount: {
+                        raw: string;
+                        decimal: number;
+                        usd: number;
+                        native: number;
+                    };
+                };
+            };
+        };
+        ownership: {
+            tokenCount: number;
+            onSaleCount: number;
+            liquidCount?: number;
+            totalValue?: number;
+        };
+        lastBuy?: {
+            value: number;
+            timestamp: number;
+        };
+        lastSell?: {
+            value: number;
+            timestamp: number;
+        };
+        acquiredAt?: string;
+        flaggedTokens?: number;
+    }>;
+    continuation?: string;
+}
+
 export class ReservoirService {
     private cacheManager?: MemoryCacheManager;
     private rateLimiter?: RateLimiter;
@@ -3344,6 +3432,119 @@ export class ReservoirService {
                 normalizeRoyalties: true,
                 sortBy: options.sortBy || "createdAt",
                 sortDirection: "desc",
+            },
+            runtime
+        );
+    }
+
+    /**
+     * Get aggregate stats for a user, grouped by collection
+     * @see https://docs.reservoir.tools/reference/getusersusercollectionsv4
+     *
+     * @param params Configuration options for the user collections request
+     * @param runtime Agent runtime for API key management
+     * @returns Array of user collection data with portfolio information
+     */
+    async getUserCollections(
+        params: UserCollectionsParams,
+        runtime: IAgentRuntime
+    ): Promise<UserCollectionsData> {
+        const endOperation = this.performanceMonitor.startOperation(
+            "getUserCollections",
+            { params }
+        );
+
+        try {
+            if (!params.user) {
+                throw new Error("User address is required");
+            }
+
+            const queryParams = {
+                community: params.community,
+                includeTopBid: params.includeTopBid ? "true" : undefined,
+                includeLiquidCount: params.includeLiquidCount
+                    ? "true"
+                    : undefined,
+                includeAttributes: params.includeAttributes
+                    ? "true"
+                    : undefined,
+                includeLastSale: params.includeLastSale ? "true" : undefined,
+                includeOwnerCount: params.includeOwnerCount
+                    ? "true"
+                    : undefined,
+                includeFlaggedTokens: params.includeFlaggedTokens
+                    ? "true"
+                    : undefined,
+                sortBy: params.sortBy || "totalValue",
+                sortDirection: params.sortDirection || "desc",
+                offset: params.offset?.toString(),
+                limit: params.limit?.toString(),
+            };
+
+            const response = await this.cachedRequest<UserCollectionsData>(
+                `/users/${params.user}/collections/v4`,
+                queryParams,
+                runtime,
+                {
+                    ttl: 300, // 5 minutes cache
+                    context: "user_collections",
+                }
+            );
+
+            console.log(
+                "Raw user collections response:",
+                JSON.stringify(response.collections[0], null, 2)
+            );
+
+            endOperation();
+            return response;
+        } catch (error) {
+            console.error("Error fetching user collections:", error);
+            this.performanceMonitor.recordMetric({
+                operation: "getUserCollections",
+                duration: 0,
+                success: false,
+                metadata: {
+                    error: error.message,
+                    params,
+                },
+            });
+            throw error;
+        }
+    }
+
+    /**
+     * Get user collections with default parameters optimized for portfolio view
+     * @param userAddress User's wallet address
+     * @param runtime Agent runtime
+     */
+    async getUserCollectionsFeed(
+        userAddress: string,
+        runtime: IAgentRuntime,
+        options: {
+            sortBy?:
+                | "totalValue"
+                | "floorAskPrice"
+                | "tokenCount"
+                | "lastBuy"
+                | "lastSell";
+            limit?: number;
+            offset?: number;
+        } = {}
+    ): Promise<UserCollectionsData> {
+        return this.getUserCollections(
+            {
+                user: userAddress,
+                includeTopBid: true,
+                includeLiquidCount: true,
+                includeAttributes: true,
+                includeLastSale: true,
+                includeOwnerCount: true,
+                includeFlaggedTokens: true,
+                sortBy: options.sortBy || "totalValue",
+                sortDirection: "desc",
+                limit: options.limit || 20,
+                offset: options.offset,
             },
             runtime
         );
