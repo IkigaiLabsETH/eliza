@@ -874,6 +874,98 @@ interface UserTokensParams {
     sortDirection?: "asc" | "desc";
 }
 
+// User asks interfaces
+interface UserAsksParams {
+    user: string;
+    collection?: string;
+    community?: string;
+    limit?: number;
+    continuation?: string;
+    includeMetadata?: boolean;
+    includeRawData?: boolean;
+    includeDynamicPricing?: boolean;
+    normalizeRoyalties?: boolean;
+    sortBy?: "price" | "createdAt";
+    sortDirection?: "asc" | "desc";
+}
+
+interface UserAsksData {
+    asks: Array<{
+        id: string;
+        kind: string;
+        side: "sell";
+        status: "active" | "inactive" | "expired" | "cancelled" | "filled";
+        tokenSetId: string;
+        tokenSetSchemaHash: string;
+        contract: string;
+        maker: string;
+        taker?: string;
+        price: {
+            currency: {
+                contract: string;
+                name: string;
+                symbol: string;
+                decimals: number;
+            };
+            amount: {
+                raw: string;
+                decimal: number;
+                usd: number;
+                native: number;
+            };
+            netAmount: {
+                raw: string;
+                decimal: number;
+                usd: number;
+                native: number;
+            };
+        };
+        validFrom: number;
+        validUntil: number;
+        quantityFilled: number;
+        quantityRemaining: number;
+        criteria?: {
+            kind: string;
+            data: {
+                token: {
+                    tokenId: string;
+                    name?: string;
+                    image?: string;
+                };
+                collection: {
+                    id: string;
+                    name: string;
+                    image?: string;
+                    slug?: string;
+                    royalties?: Array<{
+                        bps: number;
+                        recipient: string;
+                    }>;
+                };
+            };
+        };
+        source?: {
+            id: string;
+            name: string;
+            icon: string;
+            url: string;
+            domain: string;
+        };
+        feeBps?: number;
+        feeBreakdown?: Array<{
+            bps: number;
+            kind: string;
+            recipient: string;
+        }>;
+        expiration: number;
+        isReservoir?: boolean;
+        createdAt: string;
+        updatedAt: string;
+        rawData?: Record<string, any>;
+    }>;
+    continuation?: string;
+}
+
 interface UserTokensData {
     tokens: Array<{
         token: {
@@ -3148,6 +3240,109 @@ export class ReservoirService {
                 includeAttributes: true,
                 includeLastSale: true,
                 sortBy: options.sortBy || "acquiredAt",
+                sortDirection: "desc",
+            },
+            runtime
+        );
+    }
+
+    /**
+     * Get a list of asks (listings) filtered by maker
+     * @see https://docs.reservoir.tools/reference/getusersuserasksv1
+     *
+     * @param params Configuration options for the user asks request
+     * @param runtime Agent runtime for API key management
+     * @returns Array of user asks data with continuation token for pagination
+     */
+    async getUserAsks(
+        params: UserAsksParams,
+        runtime: IAgentRuntime
+    ): Promise<UserAsksData> {
+        const endOperation = this.performanceMonitor.startOperation(
+            "getUserAsks",
+            { params }
+        );
+
+        try {
+            if (!params.user) {
+                throw new Error("User address is required");
+            }
+
+            const queryParams = {
+                collection: params.collection,
+                community: params.community,
+                limit: params.limit?.toString(),
+                continuation: params.continuation,
+                includeMetadata: params.includeMetadata ? "true" : undefined,
+                includeRawData: params.includeRawData ? "true" : undefined,
+                includeDynamicPricing: params.includeDynamicPricing
+                    ? "true"
+                    : undefined,
+                normalizeRoyalties: params.normalizeRoyalties
+                    ? "true"
+                    : undefined,
+                sortBy: params.sortBy || "createdAt",
+                sortDirection: params.sortDirection || "desc",
+            };
+
+            const response = await this.cachedRequest<UserAsksData>(
+                `/users/${params.user}/asks/v1`,
+                queryParams,
+                runtime,
+                {
+                    ttl: 300, // 5 minutes cache
+                    context: "user_asks",
+                }
+            );
+
+            console.log(
+                "Raw user asks response:",
+                JSON.stringify(response.asks[0], null, 2)
+            );
+
+            endOperation();
+            return response;
+        } catch (error) {
+            console.error("Error fetching user asks:", error);
+            this.performanceMonitor.recordMetric({
+                operation: "getUserAsks",
+                duration: 0,
+                success: false,
+                metadata: {
+                    error: error.message,
+                    params,
+                },
+            });
+            throw error;
+        }
+    }
+
+    /**
+     * Get user asks (listings) with default parameters optimized for discovery
+     * @param userAddress User's wallet address
+     * @param runtime Agent runtime
+     */
+    async getUserAsksFeed(
+        userAddress: string,
+        runtime: IAgentRuntime,
+        options: {
+            collection?: string;
+            limit?: number;
+            continuation?: string;
+            sortBy?: "price" | "createdAt";
+        } = {}
+    ): Promise<UserAsksData> {
+        return this.getUserAsks(
+            {
+                user: userAddress,
+                collection: options.collection,
+                limit: options.limit || 20,
+                continuation: options.continuation,
+                includeMetadata: true,
+                includeRawData: true,
+                includeDynamicPricing: true,
+                normalizeRoyalties: true,
+                sortBy: options.sortBy || "createdAt",
                 sortDirection: "desc",
             },
             runtime
