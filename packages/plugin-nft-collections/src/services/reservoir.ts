@@ -716,6 +716,77 @@ interface UserActivityData {
     metadata?: Record<string, any>;
 }
 
+// Token activity interfaces
+interface TokenActivityParams {
+    token: string;
+    limit?: number;
+    continuation?: string;
+    types?: Array<
+        | "sale"
+        | "ask"
+        | "transfer"
+        | "mint"
+        | "bid"
+        | "bid_cancel"
+        | "ask_cancel"
+    >;
+    includeMetadata?: boolean;
+    sortBy?: "timestamp";
+    sortDirection?: "asc" | "desc";
+}
+
+interface TokenActivityData {
+    id: string;
+    type:
+        | "sale"
+        | "ask"
+        | "transfer"
+        | "mint"
+        | "bid"
+        | "bid_cancel"
+        | "ask_cancel";
+    fromAddress: string;
+    toAddress?: string;
+    price?: {
+        currency: {
+            contract: string;
+            name: string;
+            symbol: string;
+            decimals: number;
+        };
+        amount: {
+            raw: string;
+            decimal: number;
+            usd: number;
+            native: number;
+        };
+    };
+    amount?: number;
+    timestamp: number;
+    token: {
+        contract: string;
+        tokenId: string;
+        name?: string;
+        image?: string;
+        collection: {
+            id: string;
+            name: string;
+            image?: string;
+            slug?: string;
+        };
+    };
+    order?: {
+        id: string;
+        side: "ask" | "bid";
+        source?: {
+            domain: string;
+            name: string;
+            icon: string;
+        };
+    };
+    metadata?: Record<string, any>;
+}
+
 export class ReservoirService {
     private cacheManager?: MemoryCacheManager;
     private rateLimiter?: RateLimiter;
@@ -2579,6 +2650,105 @@ export class ReservoirService {
                 continuation: options.continuation,
                 includeMetadata: true,
                 includeTokenMetadata: true,
+                sortBy: "timestamp",
+                sortDirection: "desc",
+            },
+            runtime
+        );
+    }
+
+    /**
+     * Get token activity feed including sales, asks, transfers, mints, bids, and cancellations
+     * @see https://docs.reservoir.tools/reference/gettokenstokenactivityv5
+     *
+     * @param params Configuration options for the token activity request
+     * @param runtime Agent runtime for API key management
+     * @returns Array of token activity data with continuation token for pagination
+     */
+    async getTokenActivity(
+        params: TokenActivityParams,
+        runtime: IAgentRuntime
+    ): Promise<{ activities: TokenActivityData[]; continuation?: string }> {
+        const endOperation = this.performanceMonitor.startOperation(
+            "getTokenActivity",
+            { params }
+        );
+
+        try {
+            if (!params.token) {
+                throw new Error("Token parameter is required");
+            }
+
+            const queryParams = {
+                limit: params.limit?.toString(),
+                continuation: params.continuation,
+                types: params.types?.join(","),
+                includeMetadata: params.includeMetadata ? "true" : undefined,
+                sortBy: params.sortBy || "timestamp",
+                sortDirection: params.sortDirection || "desc",
+            };
+
+            const response = await this.cachedRequest<{
+                activities: TokenActivityData[];
+                continuation?: string;
+            }>(`/tokens/${params.token}/activity/v5`, queryParams, runtime, {
+                ttl: 300, // 5 minutes cache
+                context: "token_activity",
+            });
+
+            console.log(
+                "Raw token activity response:",
+                JSON.stringify(response.activities[0], null, 2)
+            );
+
+            endOperation();
+            return response;
+        } catch (error) {
+            console.error("Error fetching token activity:", error);
+            this.performanceMonitor.recordMetric({
+                operation: "getTokenActivity",
+                duration: 0,
+                success: false,
+                metadata: {
+                    error: error.message,
+                    params,
+                },
+            });
+            throw error;
+        }
+    }
+
+    /**
+     * Get token activity with default parameters optimized for discovery
+     * @param collection Collection address
+     * @param tokenId Token ID
+     * @param runtime Agent runtime
+     */
+    async getTokenActivityFeed(
+        collection: string,
+        tokenId: string,
+        runtime: IAgentRuntime,
+        options: {
+            types?: Array<
+                | "sale"
+                | "ask"
+                | "transfer"
+                | "mint"
+                | "bid"
+                | "bid_cancel"
+                | "ask_cancel"
+            >;
+            limit?: number;
+            continuation?: string;
+        } = {}
+    ): Promise<{ activities: TokenActivityData[]; continuation?: string }> {
+        return this.getTokenActivity(
+            {
+                token: `${collection}:${tokenId}`,
+                types: options.types,
+                limit: options.limit || 20,
+                continuation: options.continuation,
+                includeMetadata: true,
                 sortBy: "timestamp",
                 sortDirection: "desc",
             },
