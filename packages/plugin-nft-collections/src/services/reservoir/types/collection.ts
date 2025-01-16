@@ -171,3 +171,127 @@ export interface AttributeData {
         allTime: number;
     };
 }
+
+export interface CollectionV7Params extends CollectionSearchParams {
+    id?: string;
+    contract?: string;
+    slug?: string;
+    sortBy?:
+        | "1DayVolume"
+        | "7DayVolume"
+        | "30DayVolume"
+        | "allTimeVolume"
+        | "createdAt"
+        | "floorAskPrice";
+    sortDirection?: "asc" | "desc";
+    continuation?: string;
+    displayCurrency?: string;
+    includeTopBid?: boolean;
+    includeLowQuantityAsk?: boolean;
+    includeLastSale?: boolean;
+    includeSalesCount?: boolean;
+    includeCreatorFees?: boolean;
+    includeMintStages?: boolean;
+    includeAttributes?: boolean;
+    includeOwnerCount?: boolean;
+    includeMarketplaces?: boolean;
+}
+
+export interface CollectionV7Response {
+    collections: Array<{
+        id: string;
+        name: string;
+        slug: string;
+        symbol?: string;
+        description?: string;
+        image?: string;
+        banner?: string;
+        discordUrl?: string;
+        externalUrl?: string;
+        twitterUsername?: string;
+        openseaVerificationStatus?: string;
+        tokenCount?: number;
+        onSaleCount?: number;
+        primaryContract: string;
+        tokenSetId?: string;
+        contractKind?: string;
+        rank?: {
+            "1day": number;
+            "7day": number;
+            "30day": number;
+            allTime: number;
+        };
+        volume?: {
+            "1day": number;
+            "7day": number;
+            "30day": number;
+            allTime: number;
+        };
+        volumeChange?: {
+            "1day": number;
+            "7day": number;
+            "30day": number;
+        };
+        floorAsk?: {
+            id: string;
+            price: Price;
+            maker: string;
+            validFrom: number;
+            validUntil: number;
+            source?: Source;
+        };
+        topBid?: {
+            id: string;
+            price: Price;
+            maker: string;
+            validFrom: number;
+            validUntil: number;
+            source?: Source;
+        };
+        lastSale?: {
+            timestamp: number;
+            price: Price;
+            token?: {
+                tokenId: string;
+                image?: string;
+                name?: string;
+            };
+        };
+        salesCount?: {
+            "1day": number;
+            "7day": number;
+            "30day": number;
+            allTime: number;
+        };
+        creatorFees?: {
+            recipient: string;
+            bps: number;
+        }[];
+        attributes?: Array<{
+            key: string;
+            kind: string;
+            count: number;
+        }>;
+        ownerCount?: number;
+        mintStages?: Array<{
+            stage: string;
+            tokenId?: string;
+            kind: string;
+            status: string;
+            price?: number;
+            maxMintsPerWallet?: number;
+            startTime: string;
+            endTime: string;
+            allowlist?: {
+                merkleRoot: string;
+                proof?: string[];
+            };
+        }>;
+        marketplaces?: Array<{
+            name: string;
+            url: string;
+            icon: string;
+        }>;
+    }>;
+    continuation?: string;
+}

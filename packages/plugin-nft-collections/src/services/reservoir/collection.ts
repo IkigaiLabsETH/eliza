@@ -11,11 +11,54 @@ import {
     CollectionBidsParams,
     CollectionBidData,
     TokenMetadata,
+    CollectionV7Params,
+    CollectionV7Response,
 } from "./types";
 
 export class CollectionService extends BaseReservoirService {
     constructor(config: ReservoirServiceConfig = {}) {
         super(config);
+    }
+
+    /**
+     * Get collections with various filters and sorting options
+     * @see https://docs.reservoir.tools/reference/getcollectionsv7
+     */
+    async getCollections(
+        params: CollectionV7Params,
+        runtime: IAgentRuntime
+    ): Promise<CollectionV7Response> {
+        const endOperation = this.performanceMonitor.startOperation(
+            "getCollections",
+            { params }
+        );
+
+        try {
+            const response = await this.cachedRequest<CollectionV7Response>(
+                "/collections/v7",
+                params,
+                runtime,
+                {
+                    ttl: 300, // 5 minutes cache
+                    context: "collections",
+                }
+            );
+
+            endOperation();
+            return response;
+        } catch (error) {
+            console.error("Error fetching collections:", error);
+            this.performanceMonitor.recordMetric({
+                operation: "getCollections",
+                duration: 0,
+                success: false,
+                metadata: {
+                    error: error.message,
+                    params,
+                },
+            });
+            throw error;
+        }
     }
 
     /**
@@ -194,7 +237,7 @@ export class CollectionService extends BaseReservoirService {
 
     /**
      * Get top collections by volume, sales, etc.
-     * @see https://docs.reservoir.tools/reference/getcollectionsv6
+     * @see https://docs.reservoir.tools/reference/getcollectionsv7
      */
     async getTopCollections(
         runtime: IAgentRuntime,
@@ -206,119 +249,83 @@ export class CollectionService extends BaseReservoirService {
         );
 
         try {
-            const promises = [
-                this.cachedRequest<{ collections: any[] }>(
-                    "/collections/v6",
-                    {
-                        sortBy: "1DayVolume",
-                        limit: limit * 2,
-                        includeTopBid: true,
-                    },
-                    runtime,
-                    {
-                        ttl: 300,
-                        context: "top_collections",
-                    }
-                ),
-                this.cachedRequest<{ collections: any[] }>(
-                    "/collections/v6",
-                    {
-                        sortBy: "allTimeVolume",
-                        limit: limit * 2,
-                        includeTopBid: true,
-                    },
-                    runtime,
-                    {
-                        ttl: 300,
-                        context: "top_collections",
-                    }
-                ),
-            ];
-
-            const results = await Promise.all(promises);
-            const collections = results.flatMap((data) => data.collections);
-
-            console.log(
-                "Raw Reservoir API response:",
-                JSON.stringify(collections[0], null, 2)
+            const response = await this.getCollections(
+                {
+                    sortBy: "1DayVolume",
+                    sortDirection: "desc",
+                    limit,
+                    includeTopBid: true,
+                    includeSalesCount: true,
+                    includeLastSale: true,
+                    includeCreatorFees: true,
+                    includeAttributes: true,
+                    includeOwnerCount: true,
+                    includeMarketplaces: true,
+                },
+                runtime
             );
 
-            const mappedCollections = collections
-                .slice(0, limit)
-                .map((collection: any) => {
-                    const floorPrice =
-                        collection.floorAsk?.price?.amount?.native ||
-                        collection.floorPrice ||
-                        collection.floorAskPrice ||
-                        0;
-
-                    console.log(
-                        `Collection ${collection.name} floor price data:`,
-                        {
-                            collectionId: collection.id,
-                            floorAskPrice:
-                                collection.floorAsk?.price?.amount?.native,
-                            floorPrice: collection.floorPrice,
-                            rawFloorAsk: collection.floorAsk,
-                            finalFloorPrice: floorPrice,
-                        }
-                    );
-
-                    return {
-                        address: collection.id,
-                        name: collection.name,
-                        symbol: collection.symbol,
-                        description: collection.description,
-                        imageUrl: collection.image,
-                        externalUrl: collection.externalUrl,
-                        twitterUsername: collection.twitterUsername,
-                        discordUrl: collection.discordUrl,
-                        verified:
-                            collection.openseaVerificationStatus === "verified",
-                        floorPrice,
-                        topBid: collection.topBid?.price?.amount?.native || 0,
-                        volume24h: collection.volume?.["1day"] || 0,
-                        volume7d: collection.volume?.["7day"] || 0,
-                        volume30d: collection.volume?.["30day"] || 0,
-                        volumeAll: collection.volume?.allTime || 0,
-                        marketCap: collection.marketCap || 0,
-                        totalSupply: collection.tokenCount || 0,
-                        holders: collection.ownerCount || 0,
-                        sales24h: collection.salesCount?.["1day"] || 0,
-                        sales7d: collection.salesCount?.["7day"] || 0,
-                        sales30d: collection.salesCount?.["30day"] || 0,
-                        salesAll: collection.salesCount?.allTime || 0,
-                        lastSale: collection.lastSale
-                            ? {
-                                  price:
-                                      collection.lastSale.price?.amount
-                                          ?.native || 0,
-                                  timestamp: collection.lastSale.timestamp,
-                                  tokenId: collection.lastSale.token?.tokenId,
-                              }
-                            : undefined,
-                        royalties: collection.royalties
-                            ? {
-                                  bps: collection.royalties.bps,
-                                  recipient: collection.royalties.recipient,
-                              }
-                            : undefined,
-                        attributes: collection.attributes,
-                        marketplaces: collection.marketplaces?.map(
-                            (m: any) => ({
-                                name: m.name,
-                                url: m.url,
-                                icon: m.icon,
-                            })
-                        ),
-                        lastUpdate: new Date().toISOString(),
-                    };
-                });
+            const mappedCollections = response.collections.map(
+                (collection) => ({
+                    address: collection.id,
+                    name: collection.name,
+                    symbol: collection.symbol,
+                    description: collection.description,
+                    imageUrl: collection.image,
+                    externalUrl: collection.externalUrl,
+                    twitterUsername: collection.twitterUsername,
+                    discordUrl: collection.discordUrl,
+                    verified:
+                        collection.openseaVerificationStatus === "verified",
+                    floorPrice: collection.floorAsk?.price?.amount?.native || 0,
+                    topBid: collection.topBid?.price?.amount?.native || 0,
+                    volume24h: collection.volume?.["1day"] || 0,
+                    volume7d: collection.volume?.["7day"] || 0,
+                    volume30d: collection.volume?.["30day"] || 0,
+                    volumeAll: collection.volume?.allTime || 0,
+                    marketCap: collection.tokenCount
+                        ? (collection.floorAsk?.price?.amount?.native || 0) *
+                          collection.tokenCount
+                        : 0,
+                    totalSupply: collection.tokenCount || 0,
+                    holders: collection.ownerCount || 0,
+                    sales24h: collection.salesCount?.["1day"] || 0,
+                    sales7d: collection.salesCount?.["7day"] || 0,
+                    sales30d: collection.salesCount?.["30day"] || 0,
+                    salesAll: collection.salesCount?.allTime || 0,
+                    lastSale: collection.lastSale
+                        ? {
+                              price:
+                                  collection.lastSale.price?.amount?.native ||
+                                  0,
+                              timestamp: collection.lastSale.timestamp,
+                              tokenId: collection.lastSale.token?.tokenId,
+                          }
+                        : undefined,
+                    royalties: collection.creatorFees?.length
+                        ? {
+                              bps: collection.creatorFees[0].bps,
+                              recipient: collection.creatorFees[0].recipient,
+                          }
+                        : undefined,
+                    attributes: collection.attributes?.map((attr) => ({
+                        key: attr.key,
+                        kind: attr.kind,
+                        count: attr.count,
+                    })),
+                    marketplaces: collection.marketplaces?.map((m) => ({
+                        name: m.name,
+                        url: m.url,
+                        icon: m.icon,
+                    })),
+                    lastUpdate: new Date().toISOString(),
+                })
+            );
 
             endOperation();
             return mappedCollections;
         } catch (error) {
-            console.error("Error fetching collections:", error);
+            console.error("Error fetching top collections:", error);
             this.performanceMonitor.recordMetric({
                 operation: "getTopCollections",
                 duration: 0,
