@@ -3954,4 +3954,20 @@ export class ReservoirService {
 
         return `${this.config.baseUrl}/redirect/collections/${collection}/image/v1`;
     }
+
+    /**
+     * Get the image URL for a specific token
+     * @see https://docs.reservoir.tools/reference/getredirecttokenstokenimagev1
+     *
+     * @param collection Collection address
+     * @param tokenId Token ID
+     * @returns The direct URL to the token's image
+     */
+    getTokenImageUrl(collection: string, tokenId: string): string {
+        if (!collection || !tokenId) {
+            throw new Error("Collection and tokenId parameters are required");
+        }
+
+        return `${this.config.baseUrl}/redirect/tokens/${collection}:${tokenId}/image/v1`;
+    }
 }
