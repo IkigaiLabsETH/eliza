@@ -83,3 +83,32 @@ export interface DailyVolumeData {
     }>;
     continuation?: string;
 }
+
+/**
+ * Response data for chain-wide mint and sales statistics
+ * @see https://docs.reservoir.tools/reference/getchainstatsv1
+ */
+export interface ChainStatsData {
+    /** Stats for the last 24 hours */
+    "1day": {
+        /** Total number of mints */
+        mintCount: number;
+        /** Total mint volume in native currency */
+        mintVolume: number;
+        /** Total number of sales */
+        saleCount: number;
+        /** Total sales volume in native currency */
+        saleVolume: number;
+    };
+    /** Stats for the last 7 days */
+    "7day": {
+        /** Total number of mints */
+        mintCount: number;
+        /** Total mint volume in native currency */
+        mintVolume: number;
+        /** Total number of sales */
+        saleCount: number;
+        /** Total sales volume in native currency */
+        saleVolume: number;
+    };
+}

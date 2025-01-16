@@ -6,6 +6,7 @@ import {
     StatsData,
     DailyVolumesParams,
     DailyVolumeData,
+    ChainStatsData,
 } from "./types/stats";
 
 export class StatsService extends BaseReservoirService {
@@ -111,6 +112,51 @@ export class StatsService extends BaseReservoirService {
                 metadata: {
                     error: error.message,
                     params,
+                },
+            });
+            throw error;
+        }
+    }
+
+    /**
+     * Get chain-wide mint and sales statistics
+     * @see https://docs.reservoir.tools/reference/getchainstatsv1
+     *
+     * @param runtime Agent runtime for request execution
+     * @returns Chain-wide statistics for the last 24 hours and 7 days
+     */
+    async getChainStats(runtime: IAgentRuntime): Promise<ChainStatsData> {
+        const endOperation = this.performanceMonitor.startOperation(
+            "getChainStats",
+            {}
+        );
+
+        try {
+            const response = await this.cachedRequest<ChainStatsData>(
+                "/chain/stats/v1",
+                {},
+                runtime,
+                {
+                    ttl: 60, // Cache for 1 minute since this is real-time data
+                    context: "chain-stats",
+                }
+            );
+
+            console.log(
+                "Raw chain stats response:",
+                JSON.stringify(response, null, 2)
+            );
+
+            endOperation();
+            return response;
+        } catch (error) {
+            console.error("Error fetching chain stats:", error);
+            this.performanceMonitor.recordMetric({
+                operation: "getChainStats",
+                duration: 0,
+                success: false,
+                metadata: {
+                    error: error.message,
                 },
             });
             throw error;
