@@ -3985,4 +3985,19 @@ export class ReservoirService {
 
         return `${this.config.baseUrl}/redirect/currency/${currencyAddress}/icon/v1`;
     }
+
+    /**
+     * Get the logo URL for a marketplace/source
+     * @see https://docs.reservoir.tools/reference/getredirectsourcessourcelogov2
+     *
+     * @param source Source/marketplace ID (e.g., 'opensea', 'blur', etc.)
+     * @returns The direct URL to the source's logo
+     */
+    getSourceLogoUrl(source: string): string {
+        if (!source) {
+            throw new Error("Source parameter is required");
+        }
+
+        return `${this.config.baseUrl}/redirect/sources/${source}/logo/v2`;
+    }
 }
