@@ -54,3 +54,58 @@ export interface CollectionFloorAskEvent {
         createdAt: string;
     };
 }
+
+/**
+ * Parameters for fetching collection top bid events
+ * @see https://docs.reservoir.tools/reference/geteventscollectionstopbidv2
+ */
+export interface CollectionTopBidEventParams {
+    collection?: string;
+    contract?: string;
+    startTimestamp?: number;
+    endTimestamp?: number;
+    sortDirection?: "asc" | "desc";
+    continuation?: string;
+    limit?: number;
+}
+
+/**
+ * Response data for a collection top bid event
+ */
+export interface CollectionTopBidEvent {
+    collection: {
+        id: string;
+        name?: string;
+        image?: string;
+    };
+    topBid: {
+        id: string;
+        price: Price;
+        maker: string;
+        validFrom: number;
+        validUntil?: number;
+        source?: {
+            id: string;
+            domain: string;
+            name: string;
+            icon: string;
+            url: string;
+        };
+    };
+    event: {
+        id: string;
+        kind:
+            | "new-order"
+            | "expiry"
+            | "sale"
+            | "cancel"
+            | "balance-change"
+            | "approval-change"
+            | "revalidation"
+            | "reprice"
+            | "bootstrap";
+        previousPrice?: Price;
+        newPrice: Price;
+        createdAt: string;
+    };
+}
