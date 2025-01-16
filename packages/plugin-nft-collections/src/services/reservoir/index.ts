@@ -6,6 +6,7 @@ export * from "./user";
 export * from "./market";
 export * from "./transfer";
 export * from "./event";
+export * from "./owner";
 
 // Re-export the config and error types for convenience
 export type { ReservoirServiceConfig } from "./base";
@@ -19,6 +20,7 @@ import { UserService } from "./user";
 import { MarketService } from "./market";
 import { TransferService } from "./transfer";
 import { EventService } from "./event";
+import { OwnerService } from "./owner";
 
 export class ReservoirService {
     readonly collections: CollectionService;
@@ -27,6 +29,7 @@ export class ReservoirService {
     readonly market: MarketService;
     readonly transfers: TransferService;
     readonly events: EventService;
+    readonly owners: OwnerService;
 
     constructor(config: ReservoirServiceConfig = {}) {
         this.collections = new CollectionService(config);
@@ -35,5 +38,6 @@ export class ReservoirService {
         this.market = new MarketService(config);
         this.transfers = new TransferService(config);
         this.events = new EventService(config);
+        this.owners = new OwnerService(config);
     }
 }
