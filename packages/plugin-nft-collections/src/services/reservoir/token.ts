@@ -5,6 +5,10 @@ import {
     TokenMetadata,
     TokenActivityParams,
     TokenActivityData,
+    TokensParams,
+    TokensResponse,
+    TokenBootstrapParams,
+    TokenBootstrapResponse,
 } from "./types";
 
 export class TokenService extends BaseReservoirService {
@@ -13,15 +17,35 @@ export class TokenService extends BaseReservoirService {
     }
 
     /**
-     * Get comprehensive token data including market data, attributes, and more.
-     * @see https://docs.reservoir.tools/reference/gettokensbootstrapv1
+     * Get tokens with optional filtering, sorting, and pagination
+     * @see https://docs.reservoir.tools/reference/gettokensv7
+     *
+     * @example
+     * ```typescript
+     * // Get tokens from a specific collection
+     * const response = await tokenService.getTokens({
+     *   collection: "0x8d04a8c79ceb0889bdd12acdf3fa9d207ed3ff63",
+     *   limit: 20,
+     *   sortBy: "floorAskPrice",
+     *   includeAttributes: true,
+     * }, runtime);
+     *
+     * // Get tokens with specific token IDs
+     * const response = await tokenService.getTokens({
+     *   tokens: [
+     *     "0x8d04a8c79ceb0889bdd12acdf3fa9d207ed3ff63:1",
+     *     "0x8d04a8c79ceb0889bdd12acdf3fa9d207ed3ff63:2"
+     *   ],
+     *   includeTopBid: true,
+     * }, runtime);
+     * ```
      */
-    async getTokensMetadata(
-        params: TokenMetadataParams,
+    async getTokens(
+        params: TokensParams,
         runtime: IAgentRuntime
-    ): Promise<TokenMetadata[]> {
+    ): Promise<TokensResponse> {
         const endOperation = this.performanceMonitor.startOperation(
-            "getTokensMetadata",
+            "getTokens",
             { params }
         );
 
@@ -32,46 +56,153 @@ export class TokenService extends BaseReservoirService {
                 );
             }
 
-            const queryParams = {
-                collection: params.collection,
-                tokens: params.tokens?.join(","),
-                includeAttributes: params.includeAttributes
-                    ? "true"
-                    : undefined,
-                includeTopBid: params.includeTopBid ? "true" : undefined,
-                includeDynamicPricing: params.includeDynamicPricing
-                    ? "true"
-                    : undefined,
-                includeLastSale: params.includeLastSale ? "true" : undefined,
-                includeRawData: params.includeRawData ? "true" : undefined,
-            };
+            const queryParams = new URLSearchParams();
 
-            const response = await this.cachedRequest<{
-                tokens: TokenMetadata[];
-            }>("/tokens/bootstrap/v1", queryParams, runtime, {
-                ttl: 300, // 5 minutes cache
-                context: "tokens_metadata",
+            // Add required parameters
+            if (params.collection) {
+                queryParams.append("collection", params.collection);
+            }
+            if (params.tokens?.length) {
+                params.tokens.forEach((token) =>
+                    queryParams.append("tokens", token)
+                );
+            }
+
+            // Add optional parameters
+            if (params.attributes) {
+                Object.entries(params.attributes).forEach(([key, value]) => {
+                    queryParams.append("attributes", `${key}:${value}`);
+                });
+            }
+            if (params.limit) {
+                queryParams.append("limit", params.limit.toString());
+            }
+            if (params.continuation) {
+                queryParams.append("continuation", params.continuation);
+            }
+            if (params.sortBy) {
+                queryParams.append("sortBy", params.sortBy);
+            }
+            if (params.sortDirection) {
+                queryParams.append("sortDirection", params.sortDirection);
+            }
+
+            // Add boolean flags
+            const booleanFlags = [
+                "includeAttributes",
+                "includeTopBid",
+                "includeDynamicPricing",
+                "includeLastSale",
+                "includeRawData",
+            ] as const;
+
+            booleanFlags.forEach((flag) => {
+                if (params[flag]) {
+                    queryParams.append(flag, "true");
+                }
             });
 
-            console.log(
-                "Raw tokens metadata response:",
-                JSON.stringify(response.tokens[0], null, 2)
-            );
-
-            endOperation();
-            return response.tokens;
-        } catch (error) {
-            console.error("Error fetching token metadata:", error);
-            this.performanceMonitor.recordMetric({
-                operation: "getTokensMetadata",
-                duration: 0,
-                success: false,
-                metadata: {
-                    error: error.message,
-                    params,
+            return this.cachedRequest<TokensResponse>(
+                `/tokens/v7?${queryParams.toString()}`,
+                {
+                    method: "GET",
                 },
-            });
+                runtime,
+                {
+                    ttl: 60, // Cache for 1 minute
+                    context: "tokens",
+                }
+            );
+        } catch (error) {
+            console.error("Error in getTokens:", error);
             throw error;
+        } finally {
+            endOperation();
+        }
+    }
+
+    /**
+     * Get comprehensive token data including market data, attributes, and more.
+     * @see https://docs.reservoir.tools/reference/gettokensbootstrapv1
+     *
+     * @example
+     * ```typescript
+     * // Get bootstrap data for a collection
+     * const response = await tokenService.getTokensBootstrap({
+     *   collection: "0x8d04a8c79ceb0889bdd12acdf3fa9d207ed3ff63",
+     *   includeAttributes: true,
+     *   includeTopBid: true,
+     * }, runtime);
+     *
+     * // Get bootstrap data for specific tokens
+     * const response = await tokenService.getTokensBootstrap({
+     *   tokens: [
+     *     "0x8d04a8c79ceb0889bdd12acdf3fa9d207ed3ff63:1",
+     *     "0x8d04a8c79ceb0889bdd12acdf3fa9d207ed3ff63:2"
+     *   ],
+     *   includeLastSale: true,
+     * }, runtime);
+     * ```
+     */
+    async getTokensBootstrap(
+        params: TokenBootstrapParams,
+        runtime: IAgentRuntime
+    ): Promise<TokenBootstrapResponse> {
+        const endOperation = this.performanceMonitor.startOperation(
+            "getTokensBootstrap",
+            { params }
+        );
+
+        try {
+            if (!params.collection && !params.tokens?.length) {
+                throw new Error(
+                    "Either collection or tokens parameter must be provided"
+                );
+            }
+
+            const queryParams = new URLSearchParams();
+
+            // Add required parameters
+            if (params.collection) {
+                queryParams.append("collection", params.collection);
+            }
+            if (params.tokens?.length) {
+                params.tokens.forEach((token) =>
+                    queryParams.append("tokens", token)
+                );
+            }
+
+            // Add boolean flags
+            const booleanFlags = [
+                "includeAttributes",
+                "includeTopBid",
+                "includeDynamicPricing",
+                "includeLastSale",
+                "includeRawData",
+            ] as const;
+
+            booleanFlags.forEach((flag) => {
+                if (params[flag]) {
+                    queryParams.append(flag, "true");
+                }
+            });
+
+            return this.cachedRequest<TokenBootstrapResponse>(
+                `/tokens/bootstrap/v1?${queryParams.toString()}`,
+                {
+                    method: "GET",
+                },
+                runtime,
+                {
+                    ttl: 300, // Cache for 5 minutes
+                    context: "tokens_bootstrap",
+                }
+            );
+        } catch (error) {
+            console.error("Error in getTokensBootstrap:", error);
+            throw error;
+        } finally {
+            endOperation();
         }
     }
 
@@ -86,7 +217,7 @@ export class TokenService extends BaseReservoirService {
         tokenId: string,
         runtime: IAgentRuntime
     ): Promise<TokenMetadata> {
-        const tokens = await this.getTokensMetadata(
+        const tokens = await this.getTokensBootstrap(
             {
                 tokens: [`${collection}:${tokenId}`],
                 includeAttributes: true,
@@ -98,11 +229,11 @@ export class TokenService extends BaseReservoirService {
             runtime
         );
 
-        if (!tokens.length) {
+        if (!tokens.tokens.length) {
             throw new Error(`Token ${collection}:${tokenId} not found`);
         }
 
-        return tokens[0];
+        return tokens.tokens[0] as unknown as TokenMetadata;
     }
 
     /**
