@@ -1,10 +1,62 @@
-import { BaseReservoirService, ReservoirServiceConfig } from "./base";
+import { BaseReservoirService } from "./base";
+import { ReservoirServiceConfig } from "./base";
 import { IAgentRuntime } from "@elizaos/core";
-import { OwnersParams, OwnerData } from "./types/owner";
+import {
+    CommonCollectionsParams,
+    CommonCollectionData,
+    OwnersParams,
+    OwnerData,
+} from "./types/owner";
 
 export class OwnerService extends BaseReservoirService {
-    constructor(config: ReservoirServiceConfig = {}) {
+    constructor(config: ReservoirServiceConfig) {
         super(config);
+    }
+
+    /**
+     * Get collections common among specified owners
+     * @see https://docs.reservoir.tools/reference/getownerscommoncollectionsv1
+     *
+     * @param params Parameters for fetching common collections
+     * @param runtime Agent runtime for making requests
+     * @returns Array of common collections with ownership details
+     */
+    async getCommonCollections(
+        params: CommonCollectionsParams,
+        runtime: IAgentRuntime
+    ): Promise<CommonCollectionData[]> {
+        if (!params.owners || params.owners.length === 0) {
+            throw new Error("At least one owner address is required");
+        }
+
+        const endOperation = this.performanceMonitor.startOperation(
+            "getCommonCollections",
+            { params }
+        );
+
+        try {
+            const response = await this.cachedRequest<{
+                collections: CommonCollectionData[];
+            }>("/owners/common-collections/v1", params, runtime, {
+                ttl: 300, // Cache for 5 minutes
+                context: "owners_common_collections",
+            });
+
+            endOperation();
+            return response.collections;
+        } catch (error) {
+            console.error("Error fetching common collections:", error);
+            this.performanceMonitor.recordMetric({
+                operation: "getCommonCollections",
+                duration: 0,
+                success: false,
+                metadata: {
+                    error: error.message,
+                    params,
+                },
+            });
+            throw error;
+        }
     }
 
     /**
