@@ -5,6 +5,8 @@ import {
     CollectionFloorAskEvent,
     CollectionTopBidEventParams,
     CollectionTopBidEvent,
+    TokenFloorAskEventParams,
+    TokenFloorAskEvent,
 } from "./types/event";
 
 export class EventService extends BaseReservoirService {
@@ -107,6 +109,59 @@ export class EventService extends BaseReservoirService {
             console.error("Error fetching collection top bid events:", error);
             this.performanceMonitor.recordMetric({
                 operation: "getCollectionTopBidEvents",
+                duration: 0,
+                success: false,
+                metadata: {
+                    error: error.message,
+                    params,
+                },
+            });
+            throw error;
+        }
+    }
+
+    /**
+     * Get token floor ask events with various filter options
+     * @see https://docs.reservoir.tools/reference/geteventstokensflooraskv4
+     */
+    async getTokenFloorAskEvents(
+        params: TokenFloorAskEventParams,
+        runtime: IAgentRuntime
+    ): Promise<{
+        events: TokenFloorAskEvent[];
+        continuation?: string;
+    }> {
+        const endOperation = this.performanceMonitor.startOperation(
+            "getTokenFloorAskEvents",
+            { params }
+        );
+
+        try {
+            if (!params.token && !params.contract && !params.collection) {
+                throw new Error(
+                    "At least one of token, contract, or collection parameter is required"
+                );
+            }
+
+            const response = await this.cachedRequest<{
+                events: TokenFloorAskEvent[];
+                continuation?: string;
+            }>("/events/tokens/floor-ask/v4", params, runtime, {
+                ttl: 60, // 1 minute cache for events
+                context: "token_floor_ask_events",
+            });
+
+            console.log(
+                "Raw token floor ask events response:",
+                JSON.stringify(response.events[0], null, 2)
+            );
+
+            endOperation();
+            return response;
+        } catch (error) {
+            console.error("Error fetching token floor ask events:", error);
+            this.performanceMonitor.recordMetric({
+                operation: "getTokenFloorAskEvents",
                 duration: 0,
                 success: false,
                 metadata: {
