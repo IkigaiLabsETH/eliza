@@ -1249,6 +1249,97 @@ interface UserBidsData {
     continuation?: string;
 }
 
+// User top bids interfaces
+interface UserTopBidsParams {
+    user: string;
+    excludeEOA?: boolean;
+    normalizeRoyalties?: boolean;
+    includeCriteriaMetadata?: boolean;
+    includeRawData?: boolean;
+    includeDynamicPricing?: boolean;
+    sortBy?: "price" | "createdAt";
+    sortDirection?: "asc" | "desc";
+    limit?: number;
+    continuation?: string;
+}
+
+interface UserTopBidsData {
+    topBids: Array<{
+        id: string;
+        kind: string;
+        side: "buy";
+        status: "active" | "inactive" | "expired" | "cancelled" | "filled";
+        tokenSetId: string;
+        tokenSetSchemaHash: string;
+        contract: string;
+        maker: string;
+        taker?: string;
+        price: {
+            currency: {
+                contract: string;
+                name: string;
+                symbol: string;
+                decimals: number;
+            };
+            amount: {
+                raw: string;
+                decimal: number;
+                usd: number;
+                native: number;
+            };
+            netAmount: {
+                raw: string;
+                decimal: number;
+                usd: number;
+                native: number;
+            };
+        };
+        validFrom: number;
+        validUntil: number;
+        quantityFilled: number;
+        quantityRemaining: number;
+        criteria?: {
+            kind: string;
+            data: {
+                token?: {
+                    tokenId: string;
+                    name?: string;
+                    image?: string;
+                };
+                collection?: {
+                    id: string;
+                    name: string;
+                    image?: string;
+                    slug?: string;
+                    royalties?: Array<{
+                        bps: number;
+                        recipient: string;
+                    }>;
+                };
+            };
+        };
+        source?: {
+            id: string;
+            name: string;
+            icon: string;
+            url: string;
+            domain: string;
+        };
+        feeBps?: number;
+        feeBreakdown?: Array<{
+            bps: number;
+            kind: string;
+            recipient: string;
+        }>;
+        expiration: number;
+        isReservoir?: boolean;
+        createdAt: string;
+        updatedAt: string;
+        rawData?: Record<string, any>;
+    }>;
+    continuation?: string;
+}
+
 export class ReservoirService {
     private cacheManager?: MemoryCacheManager;
     private rateLimiter?: RateLimiter;
@@ -3740,6 +3831,110 @@ export class ReservoirService {
                 normalizeRoyalties: true,
                 sortBy: options.sortBy || "createdAt",
                 sortDirection: "desc",
+            },
+            runtime
+        );
+    }
+
+    /**
+     * Get top bids for the given user tokens
+     * @see https://docs.reservoir.tools/reference/getordersusersusertopbidsv4
+     *
+     * @param params Configuration options for the user top bids request
+     * @param runtime Agent runtime for API key management
+     * @returns Array of user top bids data with continuation token for pagination
+     */
+    async getUserTopBids(
+        params: UserTopBidsParams,
+        runtime: IAgentRuntime
+    ): Promise<UserTopBidsData> {
+        const endOperation = this.performanceMonitor.startOperation(
+            "getUserTopBids",
+            { params }
+        );
+
+        try {
+            if (!params.user) {
+                throw new Error("User address is required");
+            }
+
+            const queryParams = {
+                excludeEOA: params.excludeEOA ? "true" : undefined,
+                normalizeRoyalties: params.normalizeRoyalties
+                    ? "true"
+                    : undefined,
+                includeCriteriaMetadata: params.includeCriteriaMetadata
+                    ? "true"
+                    : undefined,
+                includeRawData: params.includeRawData ? "true" : undefined,
+                includeDynamicPricing: params.includeDynamicPricing
+                    ? "true"
+                    : undefined,
+                sortBy: params.sortBy || "price",
+                sortDirection: params.sortDirection || "desc",
+                limit: params.limit?.toString(),
+                continuation: params.continuation,
+            };
+
+            const response = await this.cachedRequest<UserTopBidsData>(
+                `/orders/users/${params.user}/top-bids/v4`,
+                queryParams,
+                runtime,
+                {
+                    ttl: 300, // 5 minutes cache
+                    context: "user_top_bids",
+                }
+            );
+
+            console.log(
+                "Raw user top bids response:",
+                JSON.stringify(response.topBids[0], null, 2)
+            );
+
+            endOperation();
+            return response;
+        } catch (error) {
+            console.error("Error fetching user top bids:", error);
+            this.performanceMonitor.recordMetric({
+                operation: "getUserTopBids",
+                duration: 0,
+                success: false,
+                metadata: {
+                    error: error.message,
+                    params,
+                },
+            });
+            throw error;
+        }
+    }
+
+    /**
+     * Get user top bids with default parameters optimized for discovery
+     * @param userAddress User's wallet address
+     * @param runtime Agent runtime
+     */
+    async getUserTopBidsFeed(
+        userAddress: string,
+        runtime: IAgentRuntime,
+        options: {
+            excludeEOA?: boolean;
+            sortBy?: "price" | "createdAt";
+            limit?: number;
+            continuation?: string;
+        } = {}
+    ): Promise<UserTopBidsData> {
+        return this.getUserTopBids(
+            {
+                user: userAddress,
+                excludeEOA: options.excludeEOA ?? true,
+                normalizeRoyalties: true,
+                includeCriteriaMetadata: true,
+                includeRawData: true,
+                includeDynamicPricing: true,
+                sortBy: options.sortBy || "price",
+                sortDirection: "desc",
+                limit: options.limit || 20,
+                continuation: options.continuation,
             },
             runtime
         );
