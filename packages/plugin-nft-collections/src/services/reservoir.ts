@@ -3939,4 +3939,19 @@ export class ReservoirService {
             runtime
         );
     }
+
+    /**
+     * Get the image URL for a collection
+     * @see https://docs.reservoir.tools/reference/getredirectcollectionscollectionimagev1
+     *
+     * @param collection Collection ID/address
+     * @returns The direct URL to the collection's image
+     */
+    getCollectionImageUrl(collection: string): string {
+        if (!collection) {
+            throw new Error("Collection parameter is required");
+        }
+
+        return `${this.config.baseUrl}/redirect/collections/${collection}/image/v1`;
+    }
 }
