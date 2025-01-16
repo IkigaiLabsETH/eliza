@@ -299,3 +299,58 @@ export interface TokenAsksResponse {
     }>;
     continuation?: string;
 }
+
+export interface TokenBidsParams {
+    token: string;
+    sortBy?: "price" | "createdAt";
+    sortDirection?: "asc" | "desc";
+    normalizeRoyalties?: boolean;
+    continuation?: string;
+    limit?: number;
+}
+
+export interface TokenBidsResponse {
+    bids: Array<{
+        id: string;
+        price: {
+            currency: {
+                contract: string;
+                name: string;
+                symbol: string;
+                decimals: number;
+            };
+            amount: {
+                raw: string;
+                decimal: number;
+                usd?: number;
+                native: number;
+            };
+        };
+        maker: string;
+        validFrom: number;
+        validUntil?: number;
+        source?: {
+            id: string;
+            domain: string;
+            name: string;
+            icon: string;
+            url: string;
+        };
+        isDynamic?: boolean;
+        criteria?: {
+            kind: string;
+            data: {
+                token: {
+                    tokenId: string;
+                    name?: string;
+                };
+                collection: {
+                    id: string;
+                    name?: string;
+                    image?: string;
+                };
+            };
+        };
+    }>;
+    continuation?: string;
+}

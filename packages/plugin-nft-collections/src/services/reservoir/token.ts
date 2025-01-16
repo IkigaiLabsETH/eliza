@@ -13,6 +13,8 @@ import {
     TokenFloorResponse,
     TokenAsksParams,
     TokenAsksResponse,
+    TokenBidsParams,
+    TokenBidsResponse,
 } from "./types";
 
 export class TokenService extends BaseReservoirService {
@@ -446,6 +448,84 @@ export class TokenService extends BaseReservoirService {
             );
         } catch (error) {
             console.error("Error in getTokenAsks:", error);
+            throw error;
+        } finally {
+            endOperation();
+        }
+    }
+
+    /**
+     * Get all active bids (offers) for a specific token
+     * @see https://docs.reservoir.tools/reference/gettokenstokenbidsv1
+     *
+     * @example
+     * ```typescript
+     * // Get all bids for a token sorted by price
+     * const response = await tokenService.getTokenBids({
+     *   token: "0x8d04a8c79ceb0889bdd12acdf3fa9d207ed3ff63:1",
+     *   sortBy: "price",
+     *   sortDirection: "desc",
+     *   limit: 20,
+     * }, runtime);
+     *
+     * // Get recent bids with normalized royalties
+     * const response = await tokenService.getTokenBids({
+     *   token: "0x8d04a8c79ceb0889bdd12acdf3fa9d207ed3ff63:1",
+     *   sortBy: "createdAt",
+     *   sortDirection: "desc",
+     *   normalizeRoyalties: true,
+     * }, runtime);
+     * ```
+     */
+    async getTokenBids(
+        params: TokenBidsParams,
+        runtime: IAgentRuntime
+    ): Promise<TokenBidsResponse> {
+        const endOperation = this.performanceMonitor.startOperation(
+            "getTokenBids",
+            { params }
+        );
+
+        try {
+            if (!params.token) {
+                throw new Error("Token parameter is required");
+            }
+
+            const queryParams = new URLSearchParams();
+
+            // Add required parameters
+            queryParams.append("token", params.token);
+
+            // Add optional parameters
+            if (params.sortBy) {
+                queryParams.append("sortBy", params.sortBy);
+            }
+            if (params.sortDirection) {
+                queryParams.append("sortDirection", params.sortDirection);
+            }
+            if (params.normalizeRoyalties) {
+                queryParams.append("normalizeRoyalties", "true");
+            }
+            if (params.continuation) {
+                queryParams.append("continuation", params.continuation);
+            }
+            if (params.limit) {
+                queryParams.append("limit", params.limit.toString());
+            }
+
+            return this.cachedRequest<TokenBidsResponse>(
+                `/tokens/${params.token}/bids/v1?${queryParams.toString()}`,
+                {
+                    method: "GET",
+                },
+                runtime,
+                {
+                    ttl: 60, // Cache for 1 minute since bids change frequently
+                    context: "token_bids",
+                }
+            );
+        } catch (error) {
+            console.error("Error in getTokenBids:", error);
             throw error;
         } finally {
             endOperation();
