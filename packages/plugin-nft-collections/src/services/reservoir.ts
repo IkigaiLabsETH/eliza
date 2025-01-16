@@ -46,6 +46,78 @@ interface ReservoirServiceConfig {
     };
 }
 
+// Explore attributes interfaces
+interface ExploreAttributesParams {
+    collection: string;
+    attribute?: string;
+    sortBy?: "tokenCount" | "floorAskPrice" | "topBidPrice";
+    sortDirection?: "asc" | "desc";
+    offset?: number;
+    limit?: number;
+    includeTopBid?: boolean;
+    includeSalesCount?: boolean;
+    includeLastSale?: boolean;
+}
+
+interface AttributeData {
+    key: string;
+    value: string;
+    tokenCount: number;
+    onSaleCount: number;
+    sampleImages: string[];
+    floorAskPrices?: {
+        currency: {
+            contract: string;
+            name: string;
+            symbol: string;
+            decimals: number;
+        };
+        amount: {
+            raw: string;
+            decimal: number;
+            usd: number;
+            native: number;
+        };
+    }[];
+    topBidPrices?: {
+        currency: {
+            contract: string;
+            name: string;
+            symbol: string;
+            decimals: number;
+        };
+        amount: {
+            raw: string;
+            decimal: number;
+            usd: number;
+            native: number;
+        };
+    }[];
+    lastSale?: {
+        timestamp: number;
+        price: {
+            currency: {
+                contract: string;
+                name: string;
+                symbol: string;
+                decimals: number;
+            };
+            amount: {
+                raw: string;
+                decimal: number;
+                usd: number;
+                native: number;
+            };
+        };
+    };
+    salesCount?: {
+        "1day": number;
+        "7day": number;
+        "30day": number;
+        allTime: number;
+    };
+}
+
 // Validation schema for configuration
 const ReservoirConfigSchema = z.object({
     apiKey: z.string().optional(),
@@ -562,6 +634,86 @@ interface TopTraderData {
         rank?: number;
     };
     period: string;
+}
+
+// User activity interfaces
+interface UserActivityParams {
+    users: string[];
+    collection?: string;
+    community?: string;
+    limit?: number;
+    continuation?: string;
+    types?: Array<
+        | "sale"
+        | "ask"
+        | "transfer"
+        | "mint"
+        | "bid"
+        | "bid_cancel"
+        | "ask_cancel"
+    >;
+    includeMetadata?: boolean;
+    includeTokenMetadata?: boolean;
+    sortBy?: "timestamp";
+    sortDirection?: "asc" | "desc";
+}
+
+interface UserActivityData {
+    id: string;
+    type:
+        | "sale"
+        | "ask"
+        | "transfer"
+        | "mint"
+        | "bid"
+        | "bid_cancel"
+        | "ask_cancel";
+    fromAddress: string;
+    toAddress?: string;
+    price?: {
+        currency: {
+            contract: string;
+            name: string;
+            symbol: string;
+            decimals: number;
+        };
+        amount: {
+            raw: string;
+            decimal: number;
+            usd: number;
+            native: number;
+        };
+    };
+    amount?: number;
+    timestamp: number;
+    token: {
+        contract: string;
+        tokenId: string;
+        name?: string;
+        image?: string;
+        collection: {
+            id: string;
+            name: string;
+            image?: string;
+            slug?: string;
+        };
+    };
+    collection?: {
+        id: string;
+        name: string;
+        image?: string;
+        slug?: string;
+    };
+    order?: {
+        id: string;
+        side: "ask" | "bid";
+        source?: {
+            domain: string;
+            name: string;
+            icon: string;
+        };
+    };
+    metadata?: Record<string, any>;
 }
 
 export class ReservoirService {
@@ -2226,6 +2378,209 @@ export class ReservoirService {
                 limit: options.limit || 20,
                 includeMetadata: true,
                 excludeZeroVolume: true,
+            },
+            runtime
+        );
+    }
+
+    /**
+     * Get attribute exploration data for a collection
+     * @see https://docs.reservoir.tools/reference/getcollectionscollectionattributesexplorev6
+     *
+     * @param params Configuration options for the attributes exploration request
+     * @param runtime Agent runtime for API key management
+     * @returns Array of attribute data with market metrics
+     */
+    async exploreAttributes(
+        params: ExploreAttributesParams,
+        runtime: IAgentRuntime
+    ): Promise<AttributeData[]> {
+        const endOperation = this.performanceMonitor.startOperation(
+            "exploreAttributes",
+            { params }
+        );
+
+        try {
+            if (!params.collection) {
+                throw new Error("Collection parameter is required");
+            }
+
+            const queryParams = {
+                attribute: params.attribute,
+                sortBy: params.sortBy || "tokenCount",
+                sortDirection: params.sortDirection || "desc",
+                offset: params.offset?.toString(),
+                limit: params.limit?.toString(),
+                includeTopBid: params.includeTopBid ? "true" : undefined,
+                includeSalesCount: params.includeSalesCount
+                    ? "true"
+                    : undefined,
+                includeLastSale: params.includeLastSale ? "true" : undefined,
+            };
+
+            const response = await this.cachedRequest<{
+                attributes: AttributeData[];
+            }>(
+                `/collections/${params.collection}/attributes/explore/v6`,
+                queryParams,
+                runtime,
+                {
+                    ttl: 300, // 5 minutes cache
+                    context: "explore_attributes",
+                }
+            );
+
+            console.log(
+                "Raw explore attributes response:",
+                JSON.stringify(response.attributes[0], null, 2)
+            );
+
+            endOperation();
+            return response.attributes;
+        } catch (error) {
+            console.error("Error exploring attributes:", error);
+            this.performanceMonitor.recordMetric({
+                operation: "exploreAttributes",
+                duration: 0,
+                success: false,
+                metadata: {
+                    error: error.message,
+                    params,
+                },
+            });
+            throw error;
+        }
+    }
+
+    /**
+     * Get collection attributes with default parameters optimized for discovery
+     * @param collection Collection ID/address
+     * @param runtime Agent runtime
+     */
+    async getCollectionAttributes(
+        collection: string,
+        runtime: IAgentRuntime,
+        options: {
+            attribute?: string;
+            sortBy?: "tokenCount" | "floorAskPrice" | "topBidPrice";
+            limit?: number;
+        } = {}
+    ): Promise<AttributeData[]> {
+        return this.exploreAttributes(
+            {
+                collection,
+                attribute: options.attribute,
+                sortBy: options.sortBy || "tokenCount",
+                limit: options.limit || 100,
+                includeTopBid: true,
+                includeSalesCount: true,
+                includeLastSale: true,
+            },
+            runtime
+        );
+    }
+
+    /**
+     * Get user activity feed including sales, asks, transfers, mints, bids, and cancellations
+     * @see https://docs.reservoir.tools/reference/getusersactivityv6
+     *
+     * @param params Configuration options for the user activity request
+     * @param runtime Agent runtime for API key management
+     * @returns Array of user activity data with continuation token for pagination
+     */
+    async getUserActivity(
+        params: UserActivityParams,
+        runtime: IAgentRuntime
+    ): Promise<{ activities: UserActivityData[]; continuation?: string }> {
+        const endOperation = this.performanceMonitor.startOperation(
+            "getUserActivity",
+            { params }
+        );
+
+        try {
+            if (!params.users?.length) {
+                throw new Error("At least one user address is required");
+            }
+
+            const queryParams = {
+                users: params.users.join(","),
+                collection: params.collection,
+                community: params.community,
+                limit: params.limit?.toString(),
+                continuation: params.continuation,
+                types: params.types?.join(","),
+                includeMetadata: params.includeMetadata ? "true" : undefined,
+                includeTokenMetadata: params.includeTokenMetadata
+                    ? "true"
+                    : undefined,
+                sortBy: params.sortBy || "timestamp",
+                sortDirection: params.sortDirection || "desc",
+            };
+
+            const response = await this.cachedRequest<{
+                activities: UserActivityData[];
+                continuation?: string;
+            }>("/users/activity/v6", queryParams, runtime, {
+                ttl: 300, // 5 minutes cache
+                context: "user_activity",
+            });
+
+            console.log(
+                "Raw user activity response:",
+                JSON.stringify(response.activities[0], null, 2)
+            );
+
+            endOperation();
+            return response;
+        } catch (error) {
+            console.error("Error fetching user activity:", error);
+            this.performanceMonitor.recordMetric({
+                operation: "getUserActivity",
+                duration: 0,
+                success: false,
+                metadata: {
+                    error: error.message,
+                    params,
+                },
+            });
+            throw error;
+        }
+    }
+
+    /**
+     * Get user activity with default parameters optimized for discovery
+     * @param userAddress User's wallet address
+     * @param runtime Agent runtime
+     */
+    async getUserActivityFeed(
+        userAddress: string,
+        runtime: IAgentRuntime,
+        options: {
+            collection?: string;
+            types?: Array<
+                | "sale"
+                | "ask"
+                | "transfer"
+                | "mint"
+                | "bid"
+                | "bid_cancel"
+                | "ask_cancel"
+            >;
+            limit?: number;
+            continuation?: string;
+        } = {}
+    ): Promise<{ activities: UserActivityData[]; continuation?: string }> {
+        return this.getUserActivity(
+            {
+                users: [userAddress],
+                collection: options.collection,
+                types: options.types,
+                limit: options.limit || 20,
+                continuation: options.continuation,
+                includeMetadata: true,
+                includeTokenMetadata: true,
+                sortBy: "timestamp",
+                sortDirection: "desc",
             },
             runtime
         );
