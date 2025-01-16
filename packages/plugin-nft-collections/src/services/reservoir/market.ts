@@ -8,6 +8,8 @@ import {
     FloorListing,
     BuyOptions,
     BuyResponse,
+    OrdersAsksParams,
+    OrderAskData,
 } from "./types";
 
 export class MarketService extends BaseReservoirService {
@@ -307,6 +309,56 @@ export class MarketService extends BaseReservoirService {
                 metadata: {
                     error: error.message,
                     options,
+                },
+            });
+            throw error;
+        }
+    }
+
+    /**
+     * Get asks (listings) with various filter options
+     * @see https://docs.reservoir.tools/reference/getordersasksv5
+     */
+    async getOrdersAsks(
+        params: OrdersAsksParams,
+        runtime: IAgentRuntime
+    ): Promise<{
+        asks: OrderAskData[];
+        continuation?: string;
+    }> {
+        const endOperation = this.performanceMonitor.startOperation(
+            "getOrdersAsks",
+            { params }
+        );
+
+        try {
+            const response = await this.cachedRequest<{
+                orders: OrderAskData[];
+                continuation?: string;
+            }>("/orders/asks/v5", params, runtime, {
+                ttl: 60, // 1 minute cache for asks
+                context: "orders_asks",
+            });
+
+            console.log(
+                "Raw orders asks response:",
+                JSON.stringify(response.orders[0], null, 2)
+            );
+
+            endOperation();
+            return {
+                asks: response.orders,
+                continuation: response.continuation,
+            };
+        } catch (error) {
+            console.error("Error fetching orders asks:", error);
+            this.performanceMonitor.recordMetric({
+                operation: "getOrdersAsks",
+                duration: 0,
+                success: false,
+                metadata: {
+                    error: error.message,
+                    params,
                 },
             });
             throw error;
