@@ -9,6 +9,8 @@ import {
     TokensResponse,
     TokenBootstrapParams,
     TokenBootstrapResponse,
+    TokenFloorParams,
+    TokenFloorResponse,
 } from "./types";
 
 export class TokenService extends BaseReservoirService {
@@ -296,5 +298,77 @@ export class TokenService extends BaseReservoirService {
             },
             runtime
         );
+    }
+
+    /**
+     * Get floor prices for tokens in a collection
+     * @see https://docs.reservoir.tools/reference/gettokensfloorv1
+     *
+     * @example
+     * ```typescript
+     * // Get floor prices for a collection
+     * const response = await tokenService.getTokensFloor({
+     *   collection: "0x8d04a8c79ceb0889bdd12acdf3fa9d207ed3ff63",
+     *   normalizeRoyalties: true,
+     * }, runtime);
+     *
+     * // Get floor price for a specific token
+     * const response = await tokenService.getTokensFloor({
+     *   token: "0x8d04a8c79ceb0889bdd12acdf3fa9d207ed3ff63:1",
+     *   displayCurrency: "ETH",
+     * }, runtime);
+     * ```
+     */
+    async getTokensFloor(
+        params: TokenFloorParams,
+        runtime: IAgentRuntime
+    ): Promise<TokenFloorResponse> {
+        const endOperation = this.performanceMonitor.startOperation(
+            "getTokensFloor",
+            { params }
+        );
+
+        try {
+            if (!params.collection && !params.token) {
+                throw new Error(
+                    "Either collection or token parameter must be provided"
+                );
+            }
+
+            const queryParams = new URLSearchParams();
+
+            // Add required parameters
+            if (params.collection) {
+                queryParams.append("collection", params.collection);
+            }
+            if (params.token) {
+                queryParams.append("token", params.token);
+            }
+
+            // Add optional parameters
+            if (params.normalizeRoyalties) {
+                queryParams.append("normalizeRoyalties", "true");
+            }
+            if (params.displayCurrency) {
+                queryParams.append("displayCurrency", params.displayCurrency);
+            }
+
+            return this.cachedRequest<TokenFloorResponse>(
+                `/tokens/floor/v1?${queryParams.toString()}`,
+                {
+                    method: "GET",
+                },
+                runtime,
+                {
+                    ttl: 60, // Cache for 1 minute since floor prices change frequently
+                    context: "tokens_floor",
+                }
+            );
+        } catch (error) {
+            console.error("Error in getTokensFloor:", error);
+            throw error;
+        } finally {
+            endOperation();
+        }
     }
 }

@@ -192,3 +192,55 @@ export interface TokenBootstrapResponse {
         };
     }>;
 }
+
+export interface TokenFloorParams {
+    collection?: string;
+    token?: string;
+    normalizeRoyalties?: boolean;
+    displayCurrency?: string;
+}
+
+export interface TokenFloorResponse {
+    tokens: Array<{
+        token: {
+            contract: string;
+            tokenId: string;
+            name?: string;
+            image?: string;
+            collection: {
+                id: string;
+                name?: string;
+                image?: string;
+            };
+        };
+        market: {
+            floorAsk: {
+                id: string;
+                price: {
+                    currency: {
+                        contract: string;
+                        name: string;
+                        symbol: string;
+                        decimals: number;
+                    };
+                    amount: {
+                        raw: string;
+                        decimal: number;
+                        usd?: number;
+                        native: number;
+                    };
+                };
+                maker: string;
+                validFrom: number;
+                validUntil?: number;
+                source?: {
+                    id: string;
+                    domain: string;
+                    name: string;
+                    icon: string;
+                    url: string;
+                };
+            };
+        };
+    }>;
+}
