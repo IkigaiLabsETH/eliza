@@ -8,6 +8,7 @@ import {
     OwnerData,
     OwnersIntersectionParams,
     OwnersIntersectionData,
+    OwnersDistributionData,
 } from "./types/owner";
 
 export class OwnerService extends BaseReservoirService {
@@ -163,6 +164,117 @@ export class OwnerService extends BaseReservoirService {
                 metadata: {
                     error: error.message,
                     params,
+                },
+            });
+            throw error;
+        }
+    }
+
+    /**
+     * Get ownership distribution for a collection
+     * @see https://docs.reservoir.tools/reference/getcollectionscollectionownersdistributionv1
+     *
+     * @param collection Collection ID/address to get distribution for
+     * @param runtime Agent runtime for making requests
+     * @returns Distribution data showing ownership concentration
+     */
+    async getOwnersDistribution(
+        collection: string,
+        runtime: IAgentRuntime
+    ): Promise<OwnersDistributionData> {
+        if (!collection) {
+            throw new Error("Collection parameter is required");
+        }
+
+        const endOperation = this.performanceMonitor.startOperation(
+            "getOwnersDistribution",
+            { collection }
+        );
+
+        try {
+            const response = await this.cachedRequest<OwnersDistributionData>(
+                `/collections/${collection}/owners-distribution/v1`,
+                {},
+                runtime,
+                {
+                    ttl: 300, // Cache for 5 minutes
+                    context: "owners_distribution",
+                }
+            );
+
+            console.log(
+                "Raw owners distribution response:",
+                JSON.stringify(response, null, 2)
+            );
+
+            endOperation();
+            return response;
+        } catch (error) {
+            console.error("Error fetching owners distribution:", error);
+            this.performanceMonitor.recordMetric({
+                operation: "getOwnersDistribution",
+                duration: 0,
+                success: false,
+                metadata: {
+                    error: error.message,
+                    collection,
+                },
+            });
+            throw error;
+        }
+    }
+
+    /**
+     * Get ownership distribution for a collections set
+     * @see https://docs.reservoir.tools/reference/getcollectionssetscollectionssetidownersdistributionv1
+     *
+     * @param collectionsSetId ID of the collections set to get distribution for
+     * @param runtime Agent runtime for making requests
+     * @returns Distribution data showing ownership concentration across the collections set
+     */
+    async getCollectionsSetOwnersDistribution(
+        collectionsSetId: string,
+        runtime: IAgentRuntime
+    ): Promise<OwnersDistributionData> {
+        if (!collectionsSetId) {
+            throw new Error("Collections set ID parameter is required");
+        }
+
+        const endOperation = this.performanceMonitor.startOperation(
+            "getCollectionsSetOwnersDistribution",
+            { collectionsSetId }
+        );
+
+        try {
+            const response = await this.cachedRequest<OwnersDistributionData>(
+                `/collections-sets/${collectionsSetId}/owners-distribution/v1`,
+                {},
+                runtime,
+                {
+                    ttl: 300, // Cache for 5 minutes
+                    context: "collections_set_owners_distribution",
+                }
+            );
+
+            console.log(
+                "Raw collections set owners distribution response:",
+                JSON.stringify(response, null, 2)
+            );
+
+            endOperation();
+            return response;
+        } catch (error) {
+            console.error(
+                "Error fetching collections set owners distribution:",
+                error
+            );
+            this.performanceMonitor.recordMetric({
+                operation: "getCollectionsSetOwnersDistribution",
+                duration: 0,
+                success: false,
+                metadata: {
+                    error: error.message,
+                    collectionsSetId,
                 },
             });
             throw error;
