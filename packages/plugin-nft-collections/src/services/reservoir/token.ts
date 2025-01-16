@@ -11,6 +11,8 @@ import {
     TokenBootstrapResponse,
     TokenFloorParams,
     TokenFloorResponse,
+    TokenAsksParams,
+    TokenAsksResponse,
 } from "./types";
 
 export class TokenService extends BaseReservoirService {
@@ -366,6 +368,84 @@ export class TokenService extends BaseReservoirService {
             );
         } catch (error) {
             console.error("Error in getTokensFloor:", error);
+            throw error;
+        } finally {
+            endOperation();
+        }
+    }
+
+    /**
+     * Get all active listings (asks) for a specific token
+     * @see https://docs.reservoir.tools/reference/gettokenstokenasksv1
+     *
+     * @example
+     * ```typescript
+     * // Get all listings for a token sorted by price
+     * const response = await tokenService.getTokenAsks({
+     *   token: "0x8d04a8c79ceb0889bdd12acdf3fa9d207ed3ff63:1",
+     *   sortBy: "price",
+     *   sortDirection: "asc",
+     *   limit: 20,
+     * }, runtime);
+     *
+     * // Get recent listings with normalized royalties
+     * const response = await tokenService.getTokenAsks({
+     *   token: "0x8d04a8c79ceb0889bdd12acdf3fa9d207ed3ff63:1",
+     *   sortBy: "createdAt",
+     *   sortDirection: "desc",
+     *   normalizeRoyalties: true,
+     * }, runtime);
+     * ```
+     */
+    async getTokenAsks(
+        params: TokenAsksParams,
+        runtime: IAgentRuntime
+    ): Promise<TokenAsksResponse> {
+        const endOperation = this.performanceMonitor.startOperation(
+            "getTokenAsks",
+            { params }
+        );
+
+        try {
+            if (!params.token) {
+                throw new Error("Token parameter is required");
+            }
+
+            const queryParams = new URLSearchParams();
+
+            // Add required parameters
+            queryParams.append("token", params.token);
+
+            // Add optional parameters
+            if (params.sortBy) {
+                queryParams.append("sortBy", params.sortBy);
+            }
+            if (params.sortDirection) {
+                queryParams.append("sortDirection", params.sortDirection);
+            }
+            if (params.normalizeRoyalties) {
+                queryParams.append("normalizeRoyalties", "true");
+            }
+            if (params.continuation) {
+                queryParams.append("continuation", params.continuation);
+            }
+            if (params.limit) {
+                queryParams.append("limit", params.limit.toString());
+            }
+
+            return this.cachedRequest<TokenAsksResponse>(
+                `/tokens/${params.token}/asks/v1?${queryParams.toString()}`,
+                {
+                    method: "GET",
+                },
+                runtime,
+                {
+                    ttl: 60, // Cache for 1 minute since listings change frequently
+                    context: "token_asks",
+                }
+            );
+        } catch (error) {
+            console.error("Error in getTokenAsks:", error);
             throw error;
         } finally {
             endOperation();
