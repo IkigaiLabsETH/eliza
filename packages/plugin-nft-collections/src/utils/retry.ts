@@ -10,13 +10,17 @@ export async function exponentialBackoff<T>(
     maxRetries: number = 3,
     baseDelay: number = 1000
 ): Promise<T> {
-    let lastError: Error;
+    let lastError: Error = new Error("Operation failed");
 
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
         try {
             return await operation();
         } catch (error) {
-            lastError = error;
+            if (error instanceof Error) {
+                lastError = error;
+            } else {
+                lastError = new Error(String(error));
+            }
 
             if (attempt === maxRetries) {
                 break;
@@ -42,8 +46,8 @@ export async function exponentialBackoff<T>(
  */
 export function withRetry(maxRetries: number = 3, baseDelay: number = 1000) {
     return function (
-        target: any,
-        propertyKey: string,
+        _target: any,
+        _propertyKey: string,
         descriptor: PropertyDescriptor
     ) {
         const originalMethod = descriptor.value;
@@ -77,17 +81,21 @@ export interface RetryPolicy {
  */
 export function createRetryFunction(policy: RetryPolicy) {
     return async function retry<T>(operation: () => Promise<T>): Promise<T> {
-        let lastError: Error;
+        let lastError: Error = new Error("Operation failed");
 
         for (let attempt = 0; attempt <= policy.maxRetries; attempt++) {
             try {
                 return await operation();
             } catch (error) {
-                lastError = error;
+                if (error instanceof Error) {
+                    lastError = error;
+                } else {
+                    lastError = new Error(String(error));
+                }
 
                 if (
                     attempt === policy.maxRetries ||
-                    (policy.shouldRetry && !policy.shouldRetry(error))
+                    (policy.shouldRetry && !policy.shouldRetry(lastError))
                 ) {
                     break;
                 }

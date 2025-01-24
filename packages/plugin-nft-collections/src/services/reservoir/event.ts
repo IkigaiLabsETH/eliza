@@ -7,7 +7,14 @@ import {
     CollectionTopBidEvent,
     TokenFloorAskEventParams,
     TokenFloorAskEvent,
+    EventsParams,
+    EventData,
+    EventsStatusParams,
+    EventStatusData,
+    EventsTransfersParams,
+    EventTransferData,
 } from "./types/event";
+import { ReservoirError, ReservoirErrorCode } from "./errors";
 
 export class EventService extends BaseReservoirService {
     constructor(config: ReservoirServiceConfig = {}) {
@@ -52,18 +59,30 @@ export class EventService extends BaseReservoirService {
 
             endOperation();
             return response;
-        } catch (error) {
+        } catch (error: unknown) {
             console.error("Error fetching collection floor ask events:", error);
             this.performanceMonitor.recordMetric({
                 operation: "getCollectionFloorAskEvents",
                 duration: 0,
                 success: false,
                 metadata: {
-                    error: error.message,
+                    error:
+                        error instanceof Error
+                            ? error.message
+                            : "Unknown error",
                     params,
                 },
             });
-            throw error;
+            if (error instanceof Error) {
+                throw new ReservoirError({
+                    message: error.message,
+                    code: ReservoirErrorCode.HttpError,
+                });
+            }
+            throw new ReservoirError({
+                message: "Unknown error fetching collection floor ask events",
+                code: ReservoirErrorCode.UnknownError,
+            });
         }
     }
 
@@ -105,18 +124,30 @@ export class EventService extends BaseReservoirService {
 
             endOperation();
             return response;
-        } catch (error) {
+        } catch (error: unknown) {
             console.error("Error fetching collection top bid events:", error);
             this.performanceMonitor.recordMetric({
                 operation: "getCollectionTopBidEvents",
                 duration: 0,
                 success: false,
                 metadata: {
-                    error: error.message,
+                    error:
+                        error instanceof Error
+                            ? error.message
+                            : "Unknown error",
                     params,
                 },
             });
-            throw error;
+            if (error instanceof Error) {
+                throw new ReservoirError({
+                    message: error.message,
+                    code: ReservoirErrorCode.HttpError,
+                });
+            }
+            throw new ReservoirError({
+                message: "Unknown error fetching collection top bid events",
+                code: ReservoirErrorCode.UnknownError,
+            });
         }
     }
 
@@ -158,18 +189,185 @@ export class EventService extends BaseReservoirService {
 
             endOperation();
             return response;
-        } catch (error) {
+        } catch (error: unknown) {
             console.error("Error fetching token floor ask events:", error);
             this.performanceMonitor.recordMetric({
                 operation: "getTokenFloorAskEvents",
                 duration: 0,
                 success: false,
                 metadata: {
-                    error: error.message,
+                    error:
+                        error instanceof Error
+                            ? error.message
+                            : "Unknown error",
                     params,
                 },
             });
-            throw error;
+            if (error instanceof Error) {
+                throw new ReservoirError({
+                    message: error.message,
+                    code: ReservoirErrorCode.HttpError,
+                });
+            }
+            throw new ReservoirError({
+                message: "Unknown error fetching token floor ask events",
+                code: ReservoirErrorCode.UnknownError,
+            });
+        }
+    }
+
+    /**
+     * Get events
+     * @see https://docs.reservoir.tools/reference/geteventsv5
+     */
+    async getEvents(
+        params: EventsParams,
+        runtime: IAgentRuntime
+    ): Promise<EventData[]> {
+        const endOperation = this.performanceMonitor.startOperation(
+            "getEvents",
+            { params }
+        );
+
+        try {
+            const response = await this.cachedRequest<{
+                events: EventData[];
+                continuation?: string;
+            }>("/events/v5", params, runtime, {
+                ttl: 60, // 1 minute cache for events
+                context: "events",
+            });
+
+            endOperation();
+            return response.events;
+        } catch (error: unknown) {
+            console.error("Error fetching events:", error);
+            this.performanceMonitor.recordMetric({
+                operation: "getEvents",
+                duration: 0,
+                success: false,
+                metadata: {
+                    error:
+                        error instanceof Error
+                            ? error.message
+                            : "Unknown error",
+                    params,
+                },
+            });
+            if (error instanceof Error) {
+                throw new ReservoirError({
+                    message: error.message,
+                    code: ReservoirErrorCode.HttpError,
+                });
+            }
+            throw new ReservoirError({
+                message: "Unknown error fetching events",
+                code: ReservoirErrorCode.UnknownError,
+            });
+        }
+    }
+
+    /**
+     * Get event status
+     * @see https://docs.reservoir.tools/reference/geteventsstatusv1
+     */
+    async getEventStatus(
+        params: EventsStatusParams,
+        runtime: IAgentRuntime
+    ): Promise<EventStatusData> {
+        const endOperation = this.performanceMonitor.startOperation(
+            "getEventStatus",
+            { params }
+        );
+
+        try {
+            const response = await this.cachedRequest<EventStatusData>(
+                "/events/status/v1",
+                params,
+                runtime,
+                {
+                    ttl: 60, // 1 minute cache for event status
+                    context: "events_status",
+                }
+            );
+
+            endOperation();
+            return response;
+        } catch (error: unknown) {
+            console.error("Error fetching event status:", error);
+            this.performanceMonitor.recordMetric({
+                operation: "getEventStatus",
+                duration: 0,
+                success: false,
+                metadata: {
+                    error:
+                        error instanceof Error
+                            ? error.message
+                            : "Unknown error",
+                    params,
+                },
+            });
+            if (error instanceof Error) {
+                throw new ReservoirError({
+                    message: error.message,
+                    code: ReservoirErrorCode.HttpError,
+                });
+            }
+            throw new ReservoirError({
+                message: "Unknown error fetching event status",
+                code: ReservoirErrorCode.UnknownError,
+            });
+        }
+    }
+
+    /**
+     * Get event transfers
+     * @see https://docs.reservoir.tools/reference/geteventstransfersv3
+     */
+    async getEventTransfers(
+        params: EventsTransfersParams,
+        runtime: IAgentRuntime
+    ): Promise<EventTransferData[]> {
+        const endOperation = this.performanceMonitor.startOperation(
+            "getEventTransfers",
+            { params }
+        );
+
+        try {
+            const response = await this.cachedRequest<{
+                transfers: EventTransferData[];
+                continuation?: string;
+            }>("/events/transfers/v3", params, runtime, {
+                ttl: 60, // 1 minute cache for transfers
+                context: "events_transfers",
+            });
+
+            endOperation();
+            return response.transfers;
+        } catch (error: unknown) {
+            console.error("Error fetching event transfers:", error);
+            this.performanceMonitor.recordMetric({
+                operation: "getEventTransfers",
+                duration: 0,
+                success: false,
+                metadata: {
+                    error:
+                        error instanceof Error
+                            ? error.message
+                            : "Unknown error",
+                    params,
+                },
+            });
+            if (error instanceof Error) {
+                throw new ReservoirError({
+                    message: error.message,
+                    code: ReservoirErrorCode.HttpError,
+                });
+            }
+            throw new ReservoirError({
+                message: "Unknown error fetching event transfers",
+                code: ReservoirErrorCode.UnknownError,
+            });
         }
     }
 }

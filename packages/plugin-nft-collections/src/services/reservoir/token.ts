@@ -1,21 +1,18 @@
 import { BaseReservoirService, ReservoirServiceConfig } from "./base";
 import { IAgentRuntime } from "@elizaos/core";
 import {
-    TokenMetadataParams,
-    TokenMetadata,
+    TokenData,
+    TokenBootstrapParams,
+    TokenFloorParams,
+    TokenFloorData,
     TokenActivityParams,
     TokenActivityData,
-    TokensParams,
-    TokensResponse,
-    TokenBootstrapParams,
-    TokenBootstrapResponse,
-    TokenFloorParams,
-    TokenFloorResponse,
-    TokenAsksParams,
-    TokenAsksResponse,
     TokenBidsParams,
-    TokenBidsResponse,
-} from "./types";
+    TokenBidData,
+    TokenAsksParams,
+    TokenAskData,
+} from "./types/token";
+import { ReservoirError, ReservoirErrorCode } from "./errors";
 
 export class TokenService extends BaseReservoirService {
     constructor(config: ReservoirServiceConfig = {}) {
@@ -47,203 +44,236 @@ export class TokenService extends BaseReservoirService {
      * ```
      */
     async getTokens(
-        params: TokensParams,
+        params: TokenBootstrapParams,
         runtime: IAgentRuntime
-    ): Promise<TokensResponse> {
+    ): Promise<TokenData[]> {
         const endOperation = this.performanceMonitor.startOperation(
             "getTokens",
             { params }
         );
 
         try {
-            if (!params.collection && !params.tokens?.length) {
-                throw new Error(
-                    "Either collection or tokens parameter must be provided"
-                );
-            }
-
-            const queryParams = new URLSearchParams();
-
-            // Add required parameters
-            if (params.collection) {
-                queryParams.append("collection", params.collection);
-            }
-            if (params.tokens?.length) {
-                params.tokens.forEach((token) =>
-                    queryParams.append("tokens", token)
-                );
-            }
-
-            // Add optional parameters
-            if (params.attributes) {
-                Object.entries(params.attributes).forEach(([key, value]) => {
-                    queryParams.append("attributes", `${key}:${value}`);
-                });
-            }
-            if (params.limit) {
-                queryParams.append("limit", params.limit.toString());
-            }
-            if (params.continuation) {
-                queryParams.append("continuation", params.continuation);
-            }
-            if (params.sortBy) {
-                queryParams.append("sortBy", params.sortBy);
-            }
-            if (params.sortDirection) {
-                queryParams.append("sortDirection", params.sortDirection);
-            }
-
-            // Add boolean flags
-            const booleanFlags = [
-                "includeAttributes",
-                "includeTopBid",
-                "includeDynamicPricing",
-                "includeLastSale",
-                "includeRawData",
-            ] as const;
-
-            booleanFlags.forEach((flag) => {
-                if (params[flag]) {
-                    queryParams.append(flag, "true");
-                }
-            });
-
-            return this.cachedRequest<TokensResponse>(
-                `/tokens/v7?${queryParams.toString()}`,
-                {
-                    method: "GET",
-                },
+            const result = await this.cachedRequest<{ tokens: TokenData[] }>(
+                "/tokens/v7",
+                params,
                 runtime,
                 {
-                    ttl: 60, // Cache for 1 minute
+                    ttl: 60,
                     context: "tokens",
                 }
             );
-        } catch (error) {
-            console.error("Error in getTokens:", error);
-            throw error;
-        } finally {
+            const mappedTokens = result.tokens.map((tokenData: any) => ({
+                token: {
+                    contract: tokenData.token.contract,
+                    tokenId: tokenData.token.tokenId,
+                    name: tokenData.token.name || "",
+                    description: tokenData.token.description || "",
+                    image: tokenData.token.image || "",
+                    media: tokenData.token.media,
+                    kind: tokenData.token.kind,
+                    isFlagged: tokenData.token.isFlagged,
+                    lastFlagUpdate: tokenData.token.lastFlagUpdate,
+                    rarity: tokenData.token.rarity,
+                    rarityRank: tokenData.token.rarityRank,
+                    collection: tokenData.token.collection && {
+                        id: tokenData.token.collection.id,
+                        name: tokenData.token.collection.name,
+                        image: tokenData.token.collection.image,
+                        slug: tokenData.token.collection.slug,
+                        description: tokenData.token.collection.description,
+                        royalties: tokenData.token.collection.royalties,
+                        floorAsk: tokenData.token.collection.floorAsk,
+                        topBid: tokenData.token.collection.topBid,
+                    },
+                    attributes: tokenData.token.attributes || [],
+                    lastSale: tokenData.token.lastSale && {
+                        price: {
+                            currency: {
+                                contract:
+                                    tokenData.token.lastSale.price.currency
+                                        .contract,
+                                name: tokenData.token.lastSale.price.currency
+                                    .name,
+                                symbol: tokenData.token.lastSale.price.currency
+                                    .symbol,
+                                decimals:
+                                    tokenData.token.lastSale.price.currency
+                                        .decimals,
+                            },
+                            amount: {
+                                raw: tokenData.token.lastSale.price.amount.raw,
+                                decimal:
+                                    tokenData.token.lastSale.price.amount
+                                        .decimal,
+                                usd: tokenData.token.lastSale.price.amount.usd,
+                                native: tokenData.token.lastSale.price.amount
+                                    .native,
+                            },
+                        },
+                        timestamp: tokenData.token.lastSale.timestamp,
+                    },
+                    owner: tokenData.token.owner,
+                    lastAppraisalValue: tokenData.token.lastAppraisalValue,
+                },
+                market: tokenData.market && {
+                    floorAsk: tokenData.market.floorAsk && {
+                        id: tokenData.market.floorAsk.id,
+                        price: {
+                            currency: {
+                                contract:
+                                    tokenData.market.floorAsk.price.currency
+                                        .contract,
+                                name: tokenData.market.floorAsk.price.currency
+                                    .name,
+                                symbol: tokenData.market.floorAsk.price.currency
+                                    .symbol,
+                                decimals:
+                                    tokenData.market.floorAsk.price.currency
+                                        .decimals,
+                            },
+                            amount: {
+                                raw: tokenData.market.floorAsk.price.amount.raw,
+                                decimal:
+                                    tokenData.market.floorAsk.price.amount
+                                        .decimal,
+                                usd: tokenData.market.floorAsk.price.amount.usd,
+                                native: tokenData.market.floorAsk.price.amount
+                                    .native,
+                            },
+                        },
+                        maker: tokenData.market.floorAsk.maker,
+                        validFrom: tokenData.market.floorAsk.validFrom,
+                        validUntil: tokenData.market.floorAsk.validUntil,
+                        source: tokenData.market.floorAsk.source && {
+                            id: tokenData.market.floorAsk.source.id,
+                            name: tokenData.market.floorAsk.source.name,
+                            icon: tokenData.market.floorAsk.source.icon,
+                            url: tokenData.market.floorAsk.source.url,
+                            domain: tokenData.market.floorAsk.source.domain,
+                        },
+                    },
+                    topBid: tokenData.market.topBid && {
+                        id: tokenData.market.topBid.id,
+                        price: {
+                            currency: {
+                                contract:
+                                    tokenData.market.topBid.price.currency
+                                        .contract,
+                                name: tokenData.market.topBid.price.currency
+                                    .name,
+                                symbol: tokenData.market.topBid.price.currency
+                                    .symbol,
+                                decimals:
+                                    tokenData.market.topBid.price.currency
+                                        .decimals,
+                            },
+                            amount: {
+                                raw: tokenData.market.topBid.price.amount.raw,
+                                decimal:
+                                    tokenData.market.topBid.price.amount
+                                        .decimal,
+                                usd: tokenData.market.topBid.price.amount.usd,
+                                native: tokenData.market.topBid.price.amount
+                                    .native,
+                            },
+                        },
+                        maker: tokenData.market.topBid.maker,
+                        validFrom: tokenData.market.topBid.validFrom,
+                        validUntil: tokenData.market.topBid.validUntil,
+                    },
+                },
+            }));
             endOperation();
+            return mappedTokens;
+        } catch (error) {
+            if (error instanceof ReservoirError) {
+                throw error;
+            }
+            if (error instanceof Error) {
+                const mockError = error as any;
+                if (mockError.response?.status === 401) {
+                    throw new ReservoirError({
+                        message: "Invalid API key",
+                        code: ReservoirErrorCode.API_KEY_INVALID,
+                    });
+                }
+                if (mockError.response?.status === 429) {
+                    throw new ReservoirError({
+                        message: "Rate limit exceeded",
+                        code: ReservoirErrorCode.RATE_LIMIT,
+                    });
+                }
+                if (mockError.response?.status === 404) {
+                    throw new ReservoirError({
+                        message: "Token not found",
+                        code: ReservoirErrorCode.HttpError,
+                    });
+                }
+                throw new ReservoirError({
+                    message: "API Error: " + mockError.message,
+                    code: ReservoirErrorCode.HttpError,
+                });
+            }
+            throw new ReservoirError({
+                message: "Unknown error fetching tokens",
+                code: ReservoirErrorCode.UnknownError,
+            });
         }
     }
 
     /**
-     * Get comprehensive token data including market data, attributes, and more.
-     * @see https://docs.reservoir.tools/reference/gettokensbootstrapv1
-     *
-     * @example
-     * ```typescript
-     * // Get bootstrap data for a collection
-     * const response = await tokenService.getTokensBootstrap({
-     *   collection: "0x8d04a8c79ceb0889bdd12acdf3fa9d207ed3ff63",
-     *   includeAttributes: true,
-     *   includeTopBid: true,
-     * }, runtime);
-     *
-     * // Get bootstrap data for specific tokens
-     * const response = await tokenService.getTokensBootstrap({
-     *   tokens: [
-     *     "0x8d04a8c79ceb0889bdd12acdf3fa9d207ed3ff63:1",
-     *     "0x8d04a8c79ceb0889bdd12acdf3fa9d207ed3ff63:2"
-     *   ],
-     *   includeLastSale: true,
-     * }, runtime);
-     * ```
+     * Get token floor price
+     * @see https://docs.reservoir.tools/reference/gettokensfloorv1
      */
-    async getTokensBootstrap(
-        params: TokenBootstrapParams,
+    async getTokenFloor(
+        params: TokenFloorParams,
         runtime: IAgentRuntime
-    ): Promise<TokenBootstrapResponse> {
+    ): Promise<TokenFloorData> {
         const endOperation = this.performanceMonitor.startOperation(
-            "getTokensBootstrap",
+            "getTokenFloor",
             { params }
         );
 
         try {
-            if (!params.collection && !params.tokens?.length) {
-                throw new Error(
-                    "Either collection or tokens parameter must be provided"
-                );
-            }
-
-            const queryParams = new URLSearchParams();
-
-            // Add required parameters
-            if (params.collection) {
-                queryParams.append("collection", params.collection);
-            }
-            if (params.tokens?.length) {
-                params.tokens.forEach((token) =>
-                    queryParams.append("tokens", token)
-                );
-            }
-
-            // Add boolean flags
-            const booleanFlags = [
-                "includeAttributes",
-                "includeTopBid",
-                "includeDynamicPricing",
-                "includeLastSale",
-                "includeRawData",
-            ] as const;
-
-            booleanFlags.forEach((flag) => {
-                if (params[flag]) {
-                    queryParams.append(flag, "true");
-                }
-            });
-
-            return this.cachedRequest<TokenBootstrapResponse>(
-                `/tokens/bootstrap/v1?${queryParams.toString()}`,
-                {
-                    method: "GET",
-                },
+            const response = await this.cachedRequest<TokenFloorData>(
+                "/tokens/floor/v1",
+                params,
                 runtime,
                 {
-                    ttl: 300, // Cache for 5 minutes
-                    context: "tokens_bootstrap",
+                    ttl: 300, // 5 minutes cache
+                    context: "tokens_floor",
                 }
             );
-        } catch (error) {
-            console.error("Error in getTokensBootstrap:", error);
-            throw error;
-        } finally {
+
             endOperation();
+            return response;
+        } catch (error) {
+            console.error("Error fetching token floor:", error);
+            this.performanceMonitor.recordMetric({
+                operation: "getTokenFloor",
+                duration: 0,
+                success: false,
+                metadata: {
+                    error:
+                        error instanceof Error ? error.message : String(error),
+                    params,
+                },
+            });
+            if (error instanceof Error) {
+                throw new ReservoirError({
+                    message: error.message,
+                    code: ReservoirErrorCode.HttpError,
+                });
+            }
+            throw new ReservoirError({
+                message: "Unknown error fetching token floor",
+                code: ReservoirErrorCode.UnknownError,
+            });
         }
     }
 
     /**
-     * Get detailed information about a specific token
-     * @param collection Collection address
-     * @param tokenId Token ID
-     * @param runtime Agent runtime
-     */
-    async getTokenMetadata(
-        collection: string,
-        tokenId: string,
-        runtime: IAgentRuntime
-    ): Promise<TokenMetadata> {
-        const tokens = await this.getTokensBootstrap(
-            {
-                tokens: [`${collection}:${tokenId}`],
-                includeAttributes: true,
-                includeTopBid: true,
-                includeDynamicPricing: true,
-                includeLastSale: true,
-                includeRawData: true,
-            },
-            runtime
-        );
-
-        if (!tokens.tokens.length) {
-            throw new Error(`Token ${collection}:${tokenId} not found`);
-        }
-
-        return tokens.tokens[0] as unknown as TokenMetadata;
-    }
-
-    /**
-     * Get token activity (sales, listings, etc.)
+     * Get token activity
      * @see https://docs.reservoir.tools/reference/gettokensactivityv6
      */
     async getTokenActivity(
@@ -273,262 +303,119 @@ export class TokenService extends BaseReservoirService {
                 duration: 0,
                 success: false,
                 metadata: {
-                    error: error.message,
+                    error:
+                        error instanceof Error ? error.message : String(error),
                     params,
                 },
             });
-            throw error;
+            if (error instanceof Error) {
+                throw new ReservoirError({
+                    message: error.message,
+                    code: ReservoirErrorCode.HttpError,
+                });
+            }
+            throw new ReservoirError({
+                message: "Unknown error fetching token activity",
+                code: ReservoirErrorCode.UnknownError,
+            });
         }
     }
 
     /**
-     * Get activity feed for a specific token
-     * @param collection Collection address
-     * @param tokenId Token ID
-     * @param runtime Agent runtime
-     */
-    async getTokenActivityFeed(
-        collection: string,
-        tokenId: string,
-        runtime: IAgentRuntime
-    ): Promise<TokenActivityData[]> {
-        return this.getTokenActivity(
-            {
-                token: `${collection}:${tokenId}`,
-                limit: 20,
-                sortBy: "timestamp",
-                sortDirection: "desc",
-                includeMetadata: true,
-            },
-            runtime
-        );
-    }
-
-    /**
-     * Get floor prices for tokens in a collection
-     * @see https://docs.reservoir.tools/reference/gettokensfloorv1
-     *
-     * @example
-     * ```typescript
-     * // Get floor prices for a collection
-     * const response = await tokenService.getTokensFloor({
-     *   collection: "0x8d04a8c79ceb0889bdd12acdf3fa9d207ed3ff63",
-     *   normalizeRoyalties: true,
-     * }, runtime);
-     *
-     * // Get floor price for a specific token
-     * const response = await tokenService.getTokensFloor({
-     *   token: "0x8d04a8c79ceb0889bdd12acdf3fa9d207ed3ff63:1",
-     *   displayCurrency: "ETH",
-     * }, runtime);
-     * ```
-     */
-    async getTokensFloor(
-        params: TokenFloorParams,
-        runtime: IAgentRuntime
-    ): Promise<TokenFloorResponse> {
-        const endOperation = this.performanceMonitor.startOperation(
-            "getTokensFloor",
-            { params }
-        );
-
-        try {
-            if (!params.collection && !params.token) {
-                throw new Error(
-                    "Either collection or token parameter must be provided"
-                );
-            }
-
-            const queryParams = new URLSearchParams();
-
-            // Add required parameters
-            if (params.collection) {
-                queryParams.append("collection", params.collection);
-            }
-            if (params.token) {
-                queryParams.append("token", params.token);
-            }
-
-            // Add optional parameters
-            if (params.normalizeRoyalties) {
-                queryParams.append("normalizeRoyalties", "true");
-            }
-            if (params.displayCurrency) {
-                queryParams.append("displayCurrency", params.displayCurrency);
-            }
-
-            return this.cachedRequest<TokenFloorResponse>(
-                `/tokens/floor/v1?${queryParams.toString()}`,
-                {
-                    method: "GET",
-                },
-                runtime,
-                {
-                    ttl: 60, // Cache for 1 minute since floor prices change frequently
-                    context: "tokens_floor",
-                }
-            );
-        } catch (error) {
-            console.error("Error in getTokensFloor:", error);
-            throw error;
-        } finally {
-            endOperation();
-        }
-    }
-
-    /**
-     * Get all active listings (asks) for a specific token
-     * @see https://docs.reservoir.tools/reference/gettokenstokenasksv1
-     *
-     * @example
-     * ```typescript
-     * // Get all listings for a token sorted by price
-     * const response = await tokenService.getTokenAsks({
-     *   token: "0x8d04a8c79ceb0889bdd12acdf3fa9d207ed3ff63:1",
-     *   sortBy: "price",
-     *   sortDirection: "asc",
-     *   limit: 20,
-     * }, runtime);
-     *
-     * // Get recent listings with normalized royalties
-     * const response = await tokenService.getTokenAsks({
-     *   token: "0x8d04a8c79ceb0889bdd12acdf3fa9d207ed3ff63:1",
-     *   sortBy: "createdAt",
-     *   sortDirection: "desc",
-     *   normalizeRoyalties: true,
-     * }, runtime);
-     * ```
+     * Get token asks (listings)
+     * @see https://docs.reservoir.tools/reference/gettokensasksv4
      */
     async getTokenAsks(
         params: TokenAsksParams,
         runtime: IAgentRuntime
-    ): Promise<TokenAsksResponse> {
+    ): Promise<TokenAskData[]> {
         const endOperation = this.performanceMonitor.startOperation(
             "getTokenAsks",
             { params }
         );
 
         try {
-            if (!params.token) {
-                throw new Error("Token parameter is required");
-            }
+            const response = await this.cachedRequest<{
+                asks: TokenAskData[];
+                continuation?: string;
+            }>("/tokens/asks/v4", params, runtime, {
+                ttl: 60, // 1 minute cache for asks
+                context: "tokens_asks",
+            });
 
-            const queryParams = new URLSearchParams();
-
-            // Add required parameters
-            queryParams.append("token", params.token);
-
-            // Add optional parameters
-            if (params.sortBy) {
-                queryParams.append("sortBy", params.sortBy);
-            }
-            if (params.sortDirection) {
-                queryParams.append("sortDirection", params.sortDirection);
-            }
-            if (params.normalizeRoyalties) {
-                queryParams.append("normalizeRoyalties", "true");
-            }
-            if (params.continuation) {
-                queryParams.append("continuation", params.continuation);
-            }
-            if (params.limit) {
-                queryParams.append("limit", params.limit.toString());
-            }
-
-            return this.cachedRequest<TokenAsksResponse>(
-                `/tokens/${params.token}/asks/v1?${queryParams.toString()}`,
-                {
-                    method: "GET",
-                },
-                runtime,
-                {
-                    ttl: 60, // Cache for 1 minute since listings change frequently
-                    context: "token_asks",
-                }
-            );
-        } catch (error) {
-            console.error("Error in getTokenAsks:", error);
-            throw error;
-        } finally {
             endOperation();
+            return response.asks;
+        } catch (error) {
+            console.error("Error fetching token asks:", error);
+            this.performanceMonitor.recordMetric({
+                operation: "getTokenAsks",
+                duration: 0,
+                success: false,
+                metadata: {
+                    error:
+                        error instanceof Error ? error.message : String(error),
+                    params,
+                },
+            });
+            if (error instanceof Error) {
+                throw new ReservoirError({
+                    message: error.message,
+                    code: ReservoirErrorCode.HttpError,
+                });
+            }
+            throw new ReservoirError({
+                message: "Unknown error fetching token asks",
+                code: ReservoirErrorCode.UnknownError,
+            });
         }
     }
 
     /**
-     * Get all active bids (offers) for a specific token
-     * @see https://docs.reservoir.tools/reference/gettokenstokenbidsv1
-     *
-     * @example
-     * ```typescript
-     * // Get all bids for a token sorted by price
-     * const response = await tokenService.getTokenBids({
-     *   token: "0x8d04a8c79ceb0889bdd12acdf3fa9d207ed3ff63:1",
-     *   sortBy: "price",
-     *   sortDirection: "desc",
-     *   limit: 20,
-     * }, runtime);
-     *
-     * // Get recent bids with normalized royalties
-     * const response = await tokenService.getTokenBids({
-     *   token: "0x8d04a8c79ceb0889bdd12acdf3fa9d207ed3ff63:1",
-     *   sortBy: "createdAt",
-     *   sortDirection: "desc",
-     *   normalizeRoyalties: true,
-     * }, runtime);
-     * ```
+     * Get token bids (offers)
+     * @see https://docs.reservoir.tools/reference/gettokensbidsv5
      */
     async getTokenBids(
         params: TokenBidsParams,
         runtime: IAgentRuntime
-    ): Promise<TokenBidsResponse> {
+    ): Promise<TokenBidData[]> {
         const endOperation = this.performanceMonitor.startOperation(
             "getTokenBids",
             { params }
         );
 
         try {
-            if (!params.token) {
-                throw new Error("Token parameter is required");
-            }
+            const response = await this.cachedRequest<{
+                bids: TokenBidData[];
+                continuation?: string;
+            }>("/tokens/bids/v5", params, runtime, {
+                ttl: 60, // 1 minute cache for bids
+                context: "tokens_bids",
+            });
 
-            const queryParams = new URLSearchParams();
-
-            // Add required parameters
-            queryParams.append("token", params.token);
-
-            // Add optional parameters
-            if (params.sortBy) {
-                queryParams.append("sortBy", params.sortBy);
-            }
-            if (params.sortDirection) {
-                queryParams.append("sortDirection", params.sortDirection);
-            }
-            if (params.normalizeRoyalties) {
-                queryParams.append("normalizeRoyalties", "true");
-            }
-            if (params.continuation) {
-                queryParams.append("continuation", params.continuation);
-            }
-            if (params.limit) {
-                queryParams.append("limit", params.limit.toString());
-            }
-
-            return this.cachedRequest<TokenBidsResponse>(
-                `/tokens/${params.token}/bids/v1?${queryParams.toString()}`,
-                {
-                    method: "GET",
-                },
-                runtime,
-                {
-                    ttl: 60, // Cache for 1 minute since bids change frequently
-                    context: "token_bids",
-                }
-            );
-        } catch (error) {
-            console.error("Error in getTokenBids:", error);
-            throw error;
-        } finally {
             endOperation();
+            return response.bids;
+        } catch (error) {
+            console.error("Error fetching token bids:", error);
+            this.performanceMonitor.recordMetric({
+                operation: "getTokenBids",
+                duration: 0,
+                success: false,
+                metadata: {
+                    error:
+                        error instanceof Error ? error.message : String(error),
+                    params,
+                },
+            });
+            if (error instanceof Error) {
+                throw new ReservoirError({
+                    message: error.message,
+                    code: ReservoirErrorCode.HttpError,
+                });
+            }
+            throw new ReservoirError({
+                message: "Unknown error fetching token bids",
+                code: ReservoirErrorCode.UnknownError,
+            });
         }
     }
 }

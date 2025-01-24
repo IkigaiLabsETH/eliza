@@ -208,12 +208,20 @@ export abstract class BaseReservoirService {
         }
 
         if (errorMessage.includes("API key")) {
-            return new ReservoirAuthenticationError(
-                "Invalid Reservoir API key"
-            );
+            return new ReservoirAuthenticationError({
+                message: "Invalid Reservoir API key",
+                code: ReservoirErrorCode.API_KEY_INVALID,
+                retryable: false,
+                severity: "CRITICAL",
+            });
         }
 
-        return new ReservoirError(errorMessage);
+        return new ReservoirError({
+            message: errorMessage,
+            code: ReservoirErrorCode.UnknownError,
+            retryable: false,
+            severity: "ERROR",
+        });
     }
 
     // Extract retry-after timestamp
@@ -334,9 +342,12 @@ export abstract class BaseReservoirService {
 
                 if (!response.ok) {
                     if (response.status === 401) {
-                        throw new ReservoirAuthenticationError(
-                            "Invalid Reservoir API key"
-                        );
+                        throw new ReservoirAuthenticationError({
+                            message: "Invalid Reservoir API key",
+                            code: ReservoirErrorCode.API_KEY_INVALID,
+                            retryable: false,
+                            severity: "CRITICAL",
+                        });
                     }
                     if (response.status === 429) {
                         const retryAfter = parseInt(
@@ -345,14 +356,23 @@ export abstract class BaseReservoirService {
                         throw new ReservoirRateLimitError(retryAfter);
                     }
 
-                    throw new ReservoirError(
-                        `HTTP error! status: ${response.status}`
-                    );
+                    throw new ReservoirError({
+                        message: `HTTP error! status: ${response.status}`,
+                        code: ReservoirErrorCode.HttpError,
+                        retryable: true,
+                        severity: "ERROR",
+                        status: response.status,
+                    });
                 }
 
                 const responseData = await response.json();
                 if (!this.validateResponseData<T>(responseData)) {
-                    throw new ReservoirError("Invalid response data format");
+                    throw new ReservoirError({
+                        message: "Invalid response data format",
+                        code: ReservoirErrorCode.UnknownError,
+                        retryable: false,
+                        severity: "ERROR",
+                    });
                 }
                 return responseData;
             });
@@ -414,8 +434,18 @@ export abstract class BaseReservoirService {
             throw error;
         }
         if (error instanceof Error) {
-            throw new ReservoirError("Unknown error occurred");
+            throw new ReservoirError({
+                message: "Unknown error occurred",
+                code: ReservoirErrorCode.UnknownError,
+                retryable: false,
+                severity: "ERROR",
+            });
         }
-        throw new ReservoirError("Unknown error occurred");
+        throw new ReservoirError({
+            message: "Unknown error occurred",
+            code: ReservoirErrorCode.UnknownError,
+            retryable: false,
+            severity: "ERROR",
+        });
     }
 }

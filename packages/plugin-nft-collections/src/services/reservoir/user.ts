@@ -11,7 +11,8 @@ import {
     UserBidsData,
     UserTopBidsParams,
     UserTopBidsData,
-} from "./types";
+} from "./types/user";
+import { ReservoirError, ReservoirErrorCode } from "./errors";
 
 export class UserService extends BaseReservoirService {
     constructor(config: ReservoirServiceConfig = {}) {
@@ -19,7 +20,7 @@ export class UserService extends BaseReservoirService {
     }
 
     /**
-     * Get user activity (sales, listings, etc.)
+     * Get user activity
      * @see https://docs.reservoir.tools/reference/getusersactivityv6
      */
     async getUserActivity(
@@ -49,39 +50,27 @@ export class UserService extends BaseReservoirService {
                 duration: 0,
                 success: false,
                 metadata: {
-                    error: error.message,
+                    error:
+                        error instanceof Error ? error.message : String(error),
                     params,
                 },
             });
-            throw error;
+            if (error instanceof Error) {
+                throw new ReservoirError({
+                    message: error.message,
+                    code: ReservoirErrorCode.HttpError,
+                });
+            }
+            throw new ReservoirError({
+                message: "Unknown error fetching user activity",
+                code: ReservoirErrorCode.UnknownError,
+            });
         }
     }
 
     /**
-     * Get activity feed for a specific user
-     * @param user User address
-     * @param runtime Agent runtime
-     */
-    async getUserActivityFeed(
-        user: string,
-        runtime: IAgentRuntime
-    ): Promise<UserActivityData[]> {
-        return this.getUserActivity(
-            {
-                users: [user],
-                limit: 20,
-                sortBy: "timestamp",
-                sortDirection: "desc",
-                includeMetadata: true,
-                includeTokenMetadata: true,
-            },
-            runtime
-        );
-    }
-
-    /**
-     * Get tokens owned by a user
-     * @see https://docs.reservoir.tools/reference/getusersusertokensv7
+     * Get user tokens
+     * @see https://docs.reservoir.tools/reference/getuserstokensv7
      */
     async getUserTokens(
         params: UserTokensParams,
@@ -112,17 +101,27 @@ export class UserService extends BaseReservoirService {
                 duration: 0,
                 success: false,
                 metadata: {
-                    error: error.message,
+                    error:
+                        error instanceof Error ? error.message : String(error),
                     params,
                 },
             });
-            throw error;
+            if (error instanceof Error) {
+                throw new ReservoirError({
+                    message: error.message,
+                    code: ReservoirErrorCode.HttpError,
+                });
+            }
+            throw new ReservoirError({
+                message: "Unknown error fetching user tokens",
+                code: ReservoirErrorCode.UnknownError,
+            });
         }
     }
 
     /**
      * Get user asks (listings)
-     * @see https://docs.reservoir.tools/reference/getusersusertokensv7
+     * @see https://docs.reservoir.tools/reference/getusersasksv4
      */
     async getUserAsks(
         params: UserAsksParams,
@@ -153,17 +152,27 @@ export class UserService extends BaseReservoirService {
                 duration: 0,
                 success: false,
                 metadata: {
-                    error: error.message,
+                    error:
+                        error instanceof Error ? error.message : String(error),
                     params,
                 },
             });
-            throw error;
+            if (error instanceof Error) {
+                throw new ReservoirError({
+                    message: error.message,
+                    code: ReservoirErrorCode.HttpError,
+                });
+            }
+            throw new ReservoirError({
+                message: "Unknown error fetching user asks",
+                code: ReservoirErrorCode.UnknownError,
+            });
         }
     }
 
     /**
      * Get user bids (offers)
-     * @see https://docs.reservoir.tools/reference/getusersuserbidsv4
+     * @see https://docs.reservoir.tools/reference/getusersbidsv5
      */
     async getUserBids(
         params: UserBidsParams,
@@ -176,7 +185,7 @@ export class UserService extends BaseReservoirService {
 
         try {
             const response = await this.cachedRequest<UserBidsData>(
-                "/users/bids/v4",
+                "/users/bids/v5",
                 params,
                 runtime,
                 {
@@ -194,17 +203,27 @@ export class UserService extends BaseReservoirService {
                 duration: 0,
                 success: false,
                 metadata: {
-                    error: error.message,
+                    error:
+                        error instanceof Error ? error.message : String(error),
                     params,
                 },
             });
-            throw error;
+            if (error instanceof Error) {
+                throw new ReservoirError({
+                    message: error.message,
+                    code: ReservoirErrorCode.HttpError,
+                });
+            }
+            throw new ReservoirError({
+                message: "Unknown error fetching user bids",
+                code: ReservoirErrorCode.UnknownError,
+            });
         }
     }
 
     /**
      * Get user top bids
-     * @see https://docs.reservoir.tools/reference/getordersusersusertopbidsv4
+     * @see https://docs.reservoir.tools/reference/getuserstopbidsv2
      */
     async getUserTopBids(
         params: UserTopBidsParams,
@@ -217,7 +236,7 @@ export class UserService extends BaseReservoirService {
 
         try {
             const response = await this.cachedRequest<UserTopBidsData>(
-                "/orders/users/top-bids/v4",
+                "/users/top-bids/v2",
                 params,
                 runtime,
                 {
@@ -235,11 +254,21 @@ export class UserService extends BaseReservoirService {
                 duration: 0,
                 success: false,
                 metadata: {
-                    error: error.message,
+                    error:
+                        error instanceof Error ? error.message : String(error),
                     params,
                 },
             });
-            throw error;
+            if (error instanceof Error) {
+                throw new ReservoirError({
+                    message: error.message,
+                    code: ReservoirErrorCode.HttpError,
+                });
+            }
+            throw new ReservoirError({
+                message: "Unknown error fetching user top bids",
+                code: ReservoirErrorCode.UnknownError,
+            });
         }
     }
 }

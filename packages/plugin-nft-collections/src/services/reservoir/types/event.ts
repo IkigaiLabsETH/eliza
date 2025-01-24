@@ -1,4 +1,11 @@
-import { Price } from "./common";
+import {
+    Collection,
+    Price,
+    Source,
+    ContinuationParams,
+    SortParams,
+    ActivityType,
+} from "./common";
 
 /**
  * Parameters for fetching collection floor ask events
@@ -29,13 +36,7 @@ export interface CollectionFloorAskEvent {
         maker: string;
         validFrom: number;
         validUntil?: number;
-        source?: {
-            id: string;
-            domain: string;
-            name: string;
-            icon: string;
-            url: string;
-        };
+        source?: Source;
     };
     event: {
         id: string;
@@ -84,13 +85,7 @@ export interface CollectionTopBidEvent {
         maker: string;
         validFrom: number;
         validUntil?: number;
-        source?: {
-            id: string;
-            domain: string;
-            name: string;
-            icon: string;
-            url: string;
-        };
+        source?: Source;
     };
     event: {
         id: string;
@@ -145,13 +140,7 @@ export interface TokenFloorAskEvent {
         maker: string;
         validFrom: number;
         validUntil?: number;
-        source?: {
-            id: string;
-            domain: string;
-            name: string;
-            icon: string;
-            url: string;
-        };
+        source?: Source;
     };
     event: {
         id: string;
@@ -168,5 +157,90 @@ export interface TokenFloorAskEvent {
         previousPrice?: Price;
         newPrice: Price;
         createdAt: string;
+    };
+}
+
+export interface EventsParams extends ContinuationParams, SortParams {
+    collection?: string;
+    contract?: string;
+    token?: string;
+    types?: ActivityType[];
+    includeMetadata?: boolean;
+    startTimestamp?: number;
+    endTimestamp?: number;
+}
+
+export interface EventData {
+    id: string;
+    type: ActivityType;
+    fromAddress: string;
+    toAddress?: string;
+    price?: Price;
+    amount?: number;
+    timestamp: number;
+    token: {
+        contract: string;
+        tokenId: string;
+        name?: string;
+        image?: string;
+        collection?: Collection;
+    };
+    order?: {
+        id: string;
+        side: "buy" | "sell";
+        source?: Source;
+    };
+    event?: {
+        id: string;
+        kind: string;
+    };
+}
+
+export interface EventsStatusParams {
+    type: "sale" | "mint" | "transfer" | "bid" | "ask";
+    txHash: string;
+    fromBlock?: number;
+    toBlock?: number;
+}
+
+export interface EventStatusData {
+    status: "pending" | "success" | "failed";
+    message?: string;
+    error?: string;
+    timestamp?: number;
+    blockHash?: string;
+    blockNumber?: number;
+    from?: string;
+    to?: string;
+    transactionHash?: string;
+}
+
+export interface EventsTransfersParams extends ContinuationParams, SortParams {
+    contract?: string;
+    token?: string;
+    collection?: string;
+    fromAddress?: string;
+    toAddress?: string;
+    startTimestamp?: number;
+    endTimestamp?: number;
+}
+
+export interface EventTransferData {
+    id: string;
+    type: "transfer" | "mint" | "burn";
+    fromAddress: string;
+    toAddress: string;
+    amount: number;
+    timestamp: number;
+    token: {
+        contract: string;
+        tokenId: string;
+        name?: string;
+        image?: string;
+        collection?: Collection;
+    };
+    event?: {
+        id: string;
+        kind: string;
     };
 }

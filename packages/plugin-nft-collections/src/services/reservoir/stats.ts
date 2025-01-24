@@ -53,14 +53,15 @@ export class StatsService extends BaseReservoirService {
 
             endOperation();
             return response;
-        } catch (error) {
+        } catch (error: unknown) {
             console.error("Error fetching stats:", error);
             this.performanceMonitor.recordMetric({
                 operation: "getStats",
                 duration: 0,
                 success: false,
                 metadata: {
-                    error: error.message,
+                    error:
+                        error instanceof Error ? error.message : String(error),
                     params,
                 },
             });
@@ -103,14 +104,15 @@ export class StatsService extends BaseReservoirService {
 
             endOperation();
             return response;
-        } catch (error) {
+        } catch (error: unknown) {
             console.error("Error fetching daily volumes:", error);
             this.performanceMonitor.recordMetric({
                 operation: "getDailyVolumes",
                 duration: 0,
                 success: false,
                 metadata: {
-                    error: error.message,
+                    error:
+                        error instanceof Error ? error.message : String(error),
                     params,
                 },
             });
@@ -149,14 +151,15 @@ export class StatsService extends BaseReservoirService {
 
             endOperation();
             return response;
-        } catch (error) {
+        } catch (error: unknown) {
             console.error("Error fetching chain stats:", error);
             this.performanceMonitor.recordMetric({
                 operation: "getChainStats",
                 duration: 0,
                 success: false,
                 metadata: {
-                    error: error.message,
+                    error:
+                        error instanceof Error ? error.message : String(error),
                 },
             });
             throw error;

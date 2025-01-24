@@ -45,7 +45,7 @@ export enum ErrorCode {
 }
 
 export interface ErrorDetails {
-    details?: Record<string, any>;
+    details?: Record<string, unknown>;
     retryable?: boolean;
     severity?: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
     suggestedAction?: string;
@@ -54,11 +54,11 @@ export interface ErrorDetails {
 export class NFTError extends Error {
     public readonly type: ErrorType;
     public readonly code: ErrorCode;
-    public readonly details?: Record<string, any>;
+    public readonly details: Record<string, unknown> | undefined;
     public readonly retryable: boolean;
     public readonly severity: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
     public readonly timestamp: string;
-    public readonly suggestedAction?: string;
+    public readonly suggestedAction: string | undefined;
 
     constructor(
         type: ErrorType,
@@ -80,19 +80,28 @@ export class NFTError extends Error {
         Error.captureStackTrace(this, this.constructor);
     }
 
-    public toJSON(): Record<string, any> {
-        return {
+    public toJSON(): Record<string, unknown> {
+        const result: Record<string, unknown> = {
             name: this.name,
             type: this.type,
             code: this.code,
             message: this.message,
-            details: this.details,
             retryable: this.retryable,
             severity: this.severity,
             timestamp: this.timestamp,
-            suggestedAction: this.suggestedAction,
-            stack: this.stack,
         };
+
+        if (this.details) {
+            result.details = this.details;
+        }
+        if (this.suggestedAction) {
+            result.suggestedAction = this.suggestedAction;
+        }
+        if (this.stack) {
+            result.stack = this.stack;
+        }
+
+        return result;
     }
 }
 

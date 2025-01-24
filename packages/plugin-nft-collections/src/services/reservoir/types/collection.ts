@@ -1,51 +1,30 @@
-import { Price, Source, Continuation } from "./common";
+import {
+    Collection,
+    Price,
+    Source,
+    ContinuationParams,
+    SortParams,
+    ActivityType,
+} from "./common";
 
-export interface CollectionBase {
-    id: string;
-    name: string;
-    slug: string;
-    symbol?: string;
-    description?: string;
-    image?: string;
-    banner?: string;
-    discordUrl?: string;
-    externalUrl?: string;
-    twitterUsername?: string;
-    openseaVerificationStatus?: string;
-    tokenCount?: number;
-    ownerCount?: number;
-    primaryContract: string;
-    tokenSetId?: string;
-    contractKind?: string;
+export interface CollectionAttribute {
+    key: string;
+    kind: string;
+    count: number;
 }
 
 export interface CollectionStats {
-    rank?: {
-        "1day": number;
-        "7day": number;
-        "30day": number;
-        allTime: number;
-    };
-    volume?: {
-        "1day": number;
-        "7day": number;
-        "30day": number;
-        allTime: number;
-    };
-    volumeChange?: {
-        "1day": number;
-        "7day": number;
-        "30day": number;
-    };
-}
-
-export interface CollectionMarket {
+    marketCap?: number;
+    numOwners?: number;
+    tokenCount?: number;
+    onSaleCount?: number;
     floorAsk?: {
         id: string;
         price: Price;
         maker: string;
         validFrom: number;
         validUntil: number;
+        source?: Source;
     };
     topBid?: {
         id: string;
@@ -54,244 +33,123 @@ export interface CollectionMarket {
         validFrom: number;
         validUntil: number;
     };
+    volume24h?: number;
+    volumeChange24h?: number;
+    volume7d?: number;
+    volumeChange7d?: number;
+    volume30d?: number;
+    volumeChange30d?: number;
+    volumeAll?: number;
 }
 
-export interface CollectionMetadata {
-    attributes?: Array<{
-        key: string;
-        kind: string;
-        count: number;
-    }>;
-    mintStages?: Array<{
-        stage: string;
-        tokenId?: string;
-        kind: string;
-        status: string;
-        price?: number;
-        maxMintsPerWallet?: number;
-        startTime: string;
-        endTime: string;
-        allowlist?: {
-            merkleRoot: string;
-            proof?: string[];
-        };
-    }>;
-    marketplaces?: Array<{
-        name: string;
-        url: string;
-        icon: string;
-    }>;
-}
-
-export interface CollectionSearchParams {
-    name?: string;
-    community?: string;
-    chain?: string;
-    includeMetadata?: boolean;
-    includeTopBid?: boolean;
-    includeAttributes?: boolean;
-    includeOwnerCount?: boolean;
-    includeMintStages?: boolean;
-    includeMarketplaces?: boolean;
-    limit?: number;
-    offset?: number;
-}
-
-export interface CollectionSearchData {
-    collection: CollectionBase &
-        CollectionStats &
-        CollectionMarket &
-        CollectionMetadata & {
-            chain: string;
-        };
-}
-
-export interface TrendingCollectionsParams
-    extends Omit<CollectionSearchParams, "name"> {
-    period?: "1h" | "6h" | "24h" | "7d" | "30d";
-    sortBy?: "volume" | "sales" | "floorAskPrice" | "floorSaleChange";
-}
-
-export interface TrendingCollectionData extends CollectionSearchData {
-    collection: CollectionSearchData["collection"] & {
-        volumeChange?: {
-            "1h"?: number;
-            "6h"?: number;
-            "24h"?: number;
-            "7d"?: number;
-            "30d"?: number;
-        };
-        floorSaleChange?: {
-            "1h"?: number;
-            "6h"?: number;
-            "24h"?: number;
-            "7d"?: number;
-            "30d"?: number;
-        };
-        salesCount?: {
-            "1h"?: number;
-            "6h"?: number;
-            "24h"?: number;
-            "7d"?: number;
-            "30d"?: number;
-            allTime?: number;
-        };
+export interface CollectionData extends Collection {
+    id: string;
+    name: string;
+    description?: string;
+    image?: string;
+    symbol?: string;
+    externalUrl?: string;
+    twitterUsername?: string;
+    discordUrl?: string;
+    openseaVerificationStatus?: string;
+    metadata?: {
+        imageUrl?: string;
+        bannerImageUrl?: string;
+        description?: string;
+        externalUrl?: string;
+        discordUrl?: string;
+        twitterUsername?: string;
     };
+    stats?: CollectionStats;
+    attributes?: CollectionAttribute[];
+    contractKind?: string;
+    tokenCount?: number;
+    primaryContract?: string;
+    tokenSetId?: string;
 }
 
-// Explore attributes interfaces
-export interface ExploreAttributesParams {
-    collection: string;
-    attribute?: string;
-    sortBy?: "tokenCount" | "floorAskPrice" | "topBidPrice";
-    sortDirection?: "asc" | "desc";
-    offset?: number;
-    limit?: number;
-    includeTopBid?: boolean;
-    includeSalesCount?: boolean;
-    includeLastSale?: boolean;
-}
-
-export interface AttributeData {
-    key: string;
-    value: string;
-    tokenCount: number;
-    onSaleCount: number;
-    sampleImages: string[];
-    floorAskPrices?: Price[];
-    topBidPrices?: Price[];
-    lastSale?: {
-        timestamp: number;
-        price: Price;
-    };
-    salesCount?: {
-        "1day": number;
-        "7day": number;
-        "30day": number;
-        allTime: number;
-    };
-}
-
-export interface CollectionV7Params extends CollectionSearchParams {
+export interface CollectionV7Params extends ContinuationParams {
     id?: string;
-    contract?: string;
     slug?: string;
-    sortBy?:
-        | "1DayVolume"
-        | "7DayVolume"
-        | "30DayVolume"
-        | "allTimeVolume"
-        | "createdAt"
-        | "floorAskPrice";
-    sortDirection?: "asc" | "desc";
-    continuation?: string;
-    displayCurrency?: string;
+    contract?: string;
     includeTopBid?: boolean;
-    includeLowQuantityAsk?: boolean;
-    includeLastSale?: boolean;
-    includeSalesCount?: boolean;
-    includeCreatorFees?: boolean;
-    includeMintStages?: boolean;
+    includeDynamicPricing?: boolean;
     includeAttributes?: boolean;
+    includeStats?: boolean;
+    includeSalesCount?: boolean;
+    includeLastSale?: boolean;
+    includeCreatorFees?: boolean;
     includeOwnerCount?: boolean;
     includeMarketplaces?: boolean;
+    sortBy?: string;
+    sortDirection?: "asc" | "desc";
+    limit?: number;
 }
 
 export interface CollectionV7Response {
-    collections: Array<{
-        id: string;
-        name: string;
-        slug: string;
-        symbol?: string;
-        description?: string;
-        image?: string;
-        banner?: string;
-        discordUrl?: string;
-        externalUrl?: string;
-        twitterUsername?: string;
-        openseaVerificationStatus?: string;
-        tokenCount?: number;
-        onSaleCount?: number;
-        primaryContract: string;
-        tokenSetId?: string;
-        contractKind?: string;
-        rank?: {
-            "1day": number;
-            "7day": number;
-            "30day": number;
-            allTime: number;
-        };
-        volume?: {
-            "1day": number;
-            "7day": number;
-            "30day": number;
-            allTime: number;
-        };
-        volumeChange?: {
-            "1day": number;
-            "7day": number;
-            "30day": number;
-        };
-        floorAsk?: {
-            id: string;
-            price: Price;
-            maker: string;
-            validFrom: number;
-            validUntil: number;
-            source?: Source;
-        };
-        topBid?: {
-            id: string;
-            price: Price;
-            maker: string;
-            validFrom: number;
-            validUntil: number;
-            source?: Source;
-        };
-        lastSale?: {
-            timestamp: number;
-            price: Price;
+    collections: CollectionData[];
+    continuation?: string;
+}
+
+export interface CollectionBidData {
+    id: string;
+    price: Price;
+    maker: string;
+    validFrom: number;
+    validUntil: number;
+    source?: Source;
+    criteria?: {
+        kind: string;
+        data: {
             token?: {
                 tokenId: string;
-                image?: string;
                 name?: string;
+                image?: string;
             };
+            collection?: Collection;
         };
-        salesCount?: {
-            "1day": number;
-            "7day": number;
-            "30day": number;
-            allTime: number;
-        };
-        creatorFees?: {
-            recipient: string;
-            bps: number;
-        }[];
-        attributes?: Array<{
-            key: string;
-            kind: string;
-            count: number;
-        }>;
-        ownerCount?: number;
-        mintStages?: Array<{
-            stage: string;
-            tokenId?: string;
-            kind: string;
-            status: string;
-            price?: number;
-            maxMintsPerWallet?: number;
-            startTime: string;
-            endTime: string;
-            allowlist?: {
-                merkleRoot: string;
-                proof?: string[];
-            };
-        }>;
-        marketplaces?: Array<{
-            name: string;
-            url: string;
-            icon: string;
-        }>;
-    }>;
-    continuation?: string;
+    };
+}
+
+export interface CollectionActivityData {
+    id: string;
+    type: ActivityType;
+    fromAddress: string;
+    toAddress?: string;
+    price?: Price;
+    amount?: number;
+    timestamp: number;
+    token: {
+        contract: string;
+        tokenId: string;
+        name?: string;
+        image?: string;
+        collection: Collection;
+    };
+    order?: {
+        id: string;
+        side: "buy" | "sell";
+        source?: Source;
+    };
+    event?: {
+        id: string;
+        kind: string;
+    };
+}
+
+export interface CollectionActivityParams
+    extends ContinuationParams,
+        SortParams {
+    collection: string;
+    types?: ActivityType[];
+    includeMetadata?: boolean;
+}
+
+export interface CollectionBidsParams extends ContinuationParams, SortParams {
+    collection: string;
+    normalizeRoyalties?: boolean;
+    includeCriteriaMetadata?: boolean;
+    includeRawData?: boolean;
+    includeDynamicPricing?: boolean;
+    currencies?: string[];
 }

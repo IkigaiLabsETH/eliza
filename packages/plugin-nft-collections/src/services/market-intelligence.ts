@@ -1,42 +1,42 @@
 import { MemoryCacheManager } from "./cache-manager";
 import { RateLimiter } from "./rate-limiter";
-import { MarketData, MarketDataSchema } from "../utils/validation";
 import axios from "axios";
-import { z } from "zod";
 import { CircuitBreaker } from "../utils/circuit-breaker";
-import { exponentialBackoff } from "../utils/retry";
 
-// Enhanced Market Data Schema with additional metrics
-const ExtendedMarketDataSchema = MarketDataSchema.extend({
-    liquidityScore: z.number().min(0).max(100).optional(),
-    volatility: z.number().min(0).optional(),
-    washTradingScore: z.number().min(0).max(100).optional(),
-    socialSentiment: z.number().min(-100).max(100).optional(),
-    tradeVolume: z
-        .object({
-            total: z.number().min(0),
-            buy: z.number().min(0).optional(),
-            sell: z.number().min(0).optional(),
-            uniqueTraders: z.number().min(0).optional(),
-        })
-        .optional(),
-    priceHistory: z
-        .array(
-            z.object({
-                timestamp: z.string().datetime(),
-                price: z.number().min(0),
-                volume: z.number().min(0).optional(),
-                trades: z.number().min(0).optional(),
-            })
-        )
-        .optional(),
-});
+// Types for market intelligence data
+interface BaseMarketData {
+    floorPrice: number;
+    volume24h: number;
+    holders: number;
+    sales24h: number;
+}
+
+interface EnhancedMarketData extends BaseMarketData {
+    marketCap: number;
+    lastUpdate: string;
+    bestOffer: number | null;
+    volume7d: number | null;
+    volume30d: number | null;
+    sales7d: number | null;
+    sales30d: number | null;
+    uniqueHolders: number | null;
+    totalSupply: number | null;
+    listedCount: number | null;
+    priceHistory: PriceHistoryEntry[] | null;
+}
+
+interface PriceHistoryEntry {
+    timestamp: number;
+    price: number;
+    volume: number | null;
+    trades: number | null;
+}
 
 interface MarketIntelligenceConfig {
-    cacheManager?: MemoryCacheManager;
-    rateLimiter?: RateLimiter;
-    openSeaApiKey?: string;
-    reservoirApiKey?: string;
+    cacheManager?: MemoryCacheManager | undefined;
+    rateLimiter?: RateLimiter | undefined;
+    openSeaApiKey?: string | undefined;
+    reservoirApiKey?: string | undefined;
     maxRetries?: number;
     retryDelay?: number;
     circuitBreakerOptions?: {
@@ -45,131 +45,143 @@ interface MarketIntelligenceConfig {
     };
 }
 
-export class MarketIntelligenceService {
-    private config: MarketIntelligenceConfig;
-    private cacheManager: MemoryCacheManager;
-    private rateLimiter?: RateLimiter;
-    private openSeaCircuitBreaker: CircuitBreaker;
-    private reservoirCircuitBreaker: CircuitBreaker;
-    private static CACHE_TTL = 30 * 60; // 30 minutes cache
-    private static PRICE_HISTORY_DAYS = 30;
+interface InitializeConfig {
+    openSeaApiKey?: string | undefined;
+    reservoirApiKey?: string | undefined;
+}
 
-    constructor(config: MarketIntelligenceConfig = {}) {
-        this.config = {
-            ...config,
-            maxRetries: config.maxRetries || 3,
-            retryDelay: config.retryDelay || 1000,
-            circuitBreakerOptions: config.circuitBreakerOptions || {
-                failureThreshold: 5,
-                resetTimeout: 60000,
-            },
+export class MarketIntelligenceService {
+    private static readonly CACHE_TTL = 900; // 15 minutes
+    private readonly config: MarketIntelligenceConfig;
+    private readonly openSeaCircuitBreaker: CircuitBreaker;
+    private readonly reservoirCircuitBreaker: CircuitBreaker;
+
+    constructor(config: MarketIntelligenceConfig) {
+        this.config = config;
+
+        const defaultCircuitBreakerOptions = {
+            failureThreshold: 5,
+            resetTimeout: 60000,
         };
 
-        this.cacheManager =
-            config.cacheManager ||
-            new MemoryCacheManager({
-                ttl: MarketIntelligenceService.CACHE_TTL,
-            });
-        this.rateLimiter = config.rateLimiter;
-
-        // Initialize circuit breakers
         this.openSeaCircuitBreaker = new CircuitBreaker(
-            this.config.circuitBreakerOptions.failureThreshold,
-            this.config.circuitBreakerOptions.resetTimeout
+            this.config.circuitBreakerOptions?.failureThreshold ??
+                defaultCircuitBreakerOptions.failureThreshold,
+            this.config.circuitBreakerOptions?.resetTimeout ??
+                defaultCircuitBreakerOptions.resetTimeout
         );
+
         this.reservoirCircuitBreaker = new CircuitBreaker(
-            this.config.circuitBreakerOptions.failureThreshold,
-            this.config.circuitBreakerOptions.resetTimeout
+            this.config.circuitBreakerOptions?.failureThreshold ??
+                defaultCircuitBreakerOptions.failureThreshold,
+            this.config.circuitBreakerOptions?.resetTimeout ??
+                defaultCircuitBreakerOptions.resetTimeout
         );
     }
 
-    async getMarketIntelligence(address: string): Promise<MarketData> {
+    private extractMetric(
+        data: Record<string, any> | undefined | null,
+        key: string
+    ): number {
+        if (!data || typeof data[key] !== "number") return 0;
+        return data[key];
+    }
+
+    async getMarketIntelligence(address: string): Promise<EnhancedMarketData> {
         const cacheKey = `market_intelligence:${address}`;
 
         try {
             // Check cache first
             const cachedData =
-                await this.cacheManager.get<MarketData>(cacheKey);
+                await this.config.cacheManager?.get<EnhancedMarketData>(
+                    cacheKey
+                );
             if (cachedData) return cachedData;
 
-            // Apply rate limiting if configured
-            if (this.rateLimiter) {
-                await this.rateLimiter.consume(address);
-            }
+            // Fetch data from APIs
+            const [openSeaResult, reservoirResult] = await Promise.all([
+                this.fetchOpenSeaData(address),
+                this.fetchReservoirData(address),
+            ]);
 
-            // Fetch market data with retries and circuit breaker
-            const [openSeaData, reservoirData, priceHistory] =
-                await Promise.allSettled([
-                    this.fetchWithRetry(() =>
-                        this.fetchOpenSeaMarketData(address)
-                    ),
-                    this.fetchWithRetry(() =>
-                        this.fetchReservoirMarketData(address)
-                    ),
-                    this.fetchPriceHistory(address),
-                ]);
+            const priceHistory = await this.fetchPriceHistory(address);
 
-            const marketData: MarketData = {
-                lastUpdate: new Date().toISOString(),
-                floorPrice: this.extractMetric(openSeaData, "floorPrice") || 0,
-                volume24h: this.extractMetric(openSeaData, "volume24h") || 0,
-                volume7d: this.extractMetric(reservoirData, "volume7d") || 0,
+            const marketData: EnhancedMarketData = {
+                floorPrice: this.extractMetric(openSeaResult, "floorPrice"),
+                volume24h: this.extractMetric(openSeaResult, "volume24h"),
+                holders: this.extractMetric(reservoirResult, "holders"),
+                sales24h: this.extractMetric(reservoirResult, "sales24h"),
                 marketCap: this.calculateMarketCap(
-                    this.extractMetric(openSeaData, "floorPrice") || 0,
-                    this.extractMetric(openSeaData, "totalSupply") || 0
+                    this.extractMetric(openSeaResult, "floorPrice"),
+                    this.extractMetric(openSeaResult, "totalSupply")
                 ),
-                holders:
-                    this.extractMetric(reservoirData, "uniqueHolders") || 0,
-                bestOffer: this.extractMetric(openSeaData, "bestOffer") || 0,
+                lastUpdate: new Date().toISOString(),
+                bestOffer: this.extractMetric(openSeaResult, "bestOffer"),
+                volume7d: this.extractMetric(reservoirResult, "volume7d"),
+                volume30d: null,
+                sales7d: null,
+                sales30d: null,
+                uniqueHolders: this.extractMetric(
+                    reservoirResult,
+                    "uniqueHolders"
+                ),
+                totalSupply: this.extractMetric(openSeaResult, "totalSupply"),
+                listedCount: null,
+                priceHistory: priceHistory.length > 0 ? priceHistory : null,
             };
 
-            // Calculate advanced metrics
-            const volatility = this.calculateVolatility(priceHistory);
-            const liquidityScore = this.calculateLiquidityScore(
-                marketData,
-                priceHistory
-            );
-            const washTradingScore = await this.detectWashTrading(address);
-            const socialSentiment = await this.analyzeSocialSentiment(address);
-
-            // Validate and cache market data with advanced metrics
-            const validatedData = ExtendedMarketDataSchema.parse({
-                ...marketData,
-                liquidityScore,
-                volatility,
-                washTradingScore,
-                socialSentiment,
-                priceHistory: this.extractMetric(priceHistory, "prices"),
-            });
-
-            await this.cacheManager.set(
+            // Cache the result
+            await this.config.cacheManager?.set(
                 cacheKey,
-                validatedData,
+                marketData,
                 MarketIntelligenceService.CACHE_TTL
             );
 
-            return validatedData;
+            return marketData;
         } catch (error) {
-            console.error(
-                `Market intelligence fetch failed for ${address}:`,
-                error
-            );
-            throw new Error(
-                `Failed to retrieve market intelligence: ${error.message}`
-            );
+            console.error("Failed to fetch market intelligence:", error);
+            throw error;
         }
     }
 
-    private async fetchWithRetry<T>(operation: () => Promise<T>): Promise<T> {
-        return exponentialBackoff(
-            operation,
-            this.config.maxRetries,
-            this.config.retryDelay
-        );
+    private async fetchPriceHistory(
+        address: string
+    ): Promise<PriceHistoryEntry[]> {
+        const cacheKey = `price_history:${address}`;
+        const cachedHistory =
+            await this.config.cacheManager?.get<PriceHistoryEntry[]>(cacheKey);
+
+        if (cachedHistory) return cachedHistory;
+
+        try {
+            // Fetch from Reservoir API
+            const history = await this.fetchReservoirPriceHistory(address);
+            const formattedHistory: PriceHistoryEntry[] = history.map(
+                (entry) => ({
+                    timestamp: Math.floor(
+                        new Date(entry.timestamp).getTime() / 1000
+                    ),
+                    price: entry.price,
+                    volume: entry.volume || null,
+                    trades: entry.trades || null,
+                })
+            );
+
+            await this.config.cacheManager?.set(
+                cacheKey,
+                formattedHistory,
+                MarketIntelligenceService.CACHE_TTL
+            );
+            return formattedHistory;
+        } catch (error) {
+            console.error("Failed to fetch price history:", error);
+            return [];
+        }
     }
 
-    private async fetchOpenSeaMarketData(address: string) {
-        if (!this.config.openSeaApiKey) {
+    private async fetchOpenSeaData(address: string) {
+        const apiKey = this.config.openSeaApiKey;
+        if (!apiKey) {
             console.warn(
                 "OpenSea API key not provided for market intelligence"
             );
@@ -185,7 +197,7 @@ export class MarketIntelligenceService {
                 `https://api.opensea.io/api/v2/collections/${address}`,
                 {
                     headers: {
-                        "X-API-KEY": this.config.openSeaApiKey,
+                        "X-API-KEY": apiKey,
                     },
                 }
             );
@@ -205,8 +217,9 @@ export class MarketIntelligenceService {
         }
     }
 
-    private async fetchReservoirMarketData(address: string) {
-        if (!this.config.reservoirApiKey) {
+    private async fetchReservoirData(address: string) {
+        const apiKey = this.config.reservoirApiKey;
+        if (!apiKey) {
             console.warn(
                 "Reservoir API key not provided for market intelligence"
             );
@@ -222,7 +235,7 @@ export class MarketIntelligenceService {
                 `https://api.reservoir.tools/collections/v6?id=${address}`,
                 {
                     headers: {
-                        "X-API-KEY": this.config.reservoirApiKey,
+                        "X-API-KEY": apiKey,
                     },
                 }
             );
@@ -240,208 +253,37 @@ export class MarketIntelligenceService {
         }
     }
 
-    private async fetchPriceHistory(address: string): Promise<any[]> {
-        const cacheKey = `price_history:${address}`;
-        const cachedHistory = await this.cacheManager.get<any[]>(cacheKey);
+    private async fetchReservoirPriceHistory(address: string): Promise<any[]> {
+        const apiKey = this.config.reservoirApiKey;
+        if (!apiKey) {
+            console.warn("Reservoir API key not provided for price history");
+            return [];
+        }
 
-        if (cachedHistory) return cachedHistory;
+        if (!this.reservoirCircuitBreaker.isAvailable()) {
+            throw new Error("Reservoir circuit breaker is open");
+        }
 
         try {
             const response = await axios.get(
                 `https://api.reservoir.tools/collections/${address}/prices/v2`,
                 {
-                    params: {
-                        limit: MarketIntelligenceService.PRICE_HISTORY_DAYS,
-                    },
                     headers: {
-                        "X-API-KEY": this.config.reservoirApiKey,
+                        "X-API-KEY": apiKey,
+                    },
+                    params: {
+                        limit: 100,
                     },
                 }
             );
 
-            const priceHistory = response.data.prices.map((p: any) => ({
-                timestamp: p.timestamp,
-                price: p.price,
-                volume: p.volume,
-                trades: p.trades,
-            }));
-
-            await this.cacheManager.set(
-                cacheKey,
-                priceHistory,
-                MarketIntelligenceService.CACHE_TTL
-            );
-            return priceHistory;
+            this.reservoirCircuitBreaker.recordSuccess();
+            return response.data.prices || [];
         } catch (error) {
-            console.error("Price history fetch failed", error);
+            this.reservoirCircuitBreaker.recordFailure();
+            console.error("Reservoir price history fetch failed", error);
             return [];
         }
-    }
-
-    private calculateVolatility(
-        priceHistory: PromiseSettledResult<any[]>
-    ): number {
-        if (
-            priceHistory.status !== "fulfilled" ||
-            !priceHistory.value?.length
-        ) {
-            return 0;
-        }
-
-        const prices = priceHistory.value.map((p) => p.price);
-        const returns = prices
-            .slice(1)
-            .map((price, i) => Math.log(price / prices[i]));
-
-        const meanReturn = returns.reduce((a, b) => a + b, 0) / returns.length;
-        const variance =
-            returns.reduce((a, b) => a + Math.pow(b - meanReturn, 2), 0) /
-            returns.length;
-
-        return Math.sqrt(variance * 365) * 100; // Annualized volatility
-    }
-
-    private calculateLiquidityScore(
-        marketData: MarketData,
-        priceHistory: PromiseSettledResult<any[]>
-    ): number {
-        const { volume24h, holders } = marketData;
-
-        if (!volume24h || !holders) return 0;
-
-        // Base liquidity score from volume/holders ratio
-        const volumeScore = Math.min((volume24h / holders) * 10, 50);
-
-        // Additional factors from price history
-        const priceStability = this.calculatePriceStability(priceHistory);
-        const tradeFrequency = this.calculateTradeFrequency(priceHistory);
-
-        // Weighted combination
-        return Math.min(
-            volumeScore + priceStability * 25 + tradeFrequency * 25,
-            100
-        );
-    }
-
-    private calculatePriceStability(
-        priceHistory: PromiseSettledResult<any[]>
-    ): number {
-        if (
-            priceHistory.status !== "fulfilled" ||
-            !priceHistory.value?.length
-        ) {
-            return 0;
-        }
-
-        const prices = priceHistory.value.map((p) => p.price);
-        const maxPrice = Math.max(...prices);
-        const minPrice = Math.min(...prices);
-        const avgPrice = prices.reduce((a, b) => a + b, 0) / prices.length;
-
-        return 1 - (maxPrice - minPrice) / avgPrice;
-    }
-
-    private calculateTradeFrequency(
-        priceHistory: PromiseSettledResult<any[]>
-    ): number {
-        if (
-            priceHistory.status !== "fulfilled" ||
-            !priceHistory.value?.length
-        ) {
-            return 0;
-        }
-
-        const totalTrades = priceHistory.value.reduce(
-            (sum, p) => sum + (p.trades || 0),
-            0
-        );
-        return Math.min(totalTrades / priceHistory.value.length / 10, 1);
-    }
-
-    private async detectWashTrading(address: string): Promise<number> {
-        try {
-            const trades = await this.fetchRecentTrades(address);
-
-            // Analyze trading patterns
-            const suspiciousPatterns = this.analyzeTradingPatterns(trades);
-            const addressConcentration =
-                this.calculateAddressConcentration(trades);
-            const priceDeviation = this.calculatePriceDeviation(trades);
-
-            // Combine factors into wash trading score (0-100)
-            return Math.min(
-                suspiciousPatterns * 40 +
-                    addressConcentration * 30 +
-                    priceDeviation * 30,
-                100
-            );
-        } catch (error) {
-            console.error("Wash trading detection failed", error);
-            return 0;
-        }
-    }
-
-    private async analyzeSocialSentiment(address: string): Promise<number> {
-        try {
-            const [twitterData, discordData] = await Promise.all([
-                this.fetchTwitterSentiment(address),
-                this.fetchDiscordActivity(address),
-            ]);
-
-            // Combine social metrics into sentiment score (-100 to 100)
-            return this.calculateSentimentScore(twitterData, discordData);
-        } catch (error) {
-            console.error("Social sentiment analysis failed", error);
-            return 0;
-        }
-    }
-
-    private async fetchRecentTrades(address: string): Promise<any[]> {
-        // Implementation for fetching recent trades
-        return [];
-    }
-
-    private analyzeTradingPatterns(trades: any[]): number {
-        // Implementation for analyzing trading patterns
-        return 0;
-    }
-
-    private calculateAddressConcentration(trades: any[]): number {
-        // Implementation for calculating address concentration
-        return 0;
-    }
-
-    private calculatePriceDeviation(trades: any[]): number {
-        // Implementation for calculating price deviation
-        return 0;
-    }
-
-    private async fetchTwitterSentiment(address: string): Promise<any> {
-        // Implementation for fetching Twitter sentiment
-        return {};
-    }
-
-    private async fetchDiscordActivity(address: string): Promise<any> {
-        // Implementation for fetching Discord activity
-        return {};
-    }
-
-    private calculateSentimentScore(
-        twitterData: any,
-        discordData: any
-    ): number {
-        // Implementation for calculating sentiment score
-        return 0;
-    }
-
-    private extractMetric(
-        result: PromiseSettledResult<any>,
-        key: string
-    ): number | undefined {
-        if (result.status === "fulfilled" && result.value) {
-            return result.value[key];
-        }
-        return undefined;
     }
 
     private calculateMarketCap(
@@ -449,6 +291,11 @@ export class MarketIntelligenceService {
         totalSupply: number
     ): number {
         return floorPrice * totalSupply;
+    }
+
+    public async initialize(config: InitializeConfig): Promise<void> {
+        this.config.openSeaApiKey = config.openSeaApiKey;
+        this.config.reservoirApiKey = config.reservoirApiKey;
     }
 }
 

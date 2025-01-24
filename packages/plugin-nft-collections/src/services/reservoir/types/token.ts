@@ -1,4 +1,11 @@
-import { Price, Source } from "./common";
+import {
+    Collection,
+    Price,
+    Source,
+    ContinuationParams,
+    SortParams,
+    ActivityType,
+} from "./common";
 
 export interface TokenAttribute {
     key: string;
@@ -86,6 +93,57 @@ export interface TokenMetadata {
     market?: TokenMarket;
 }
 
+export interface TokenData {
+    token: {
+        contract: string;
+        tokenId: string;
+        name?: string;
+        description?: string;
+        image?: string;
+        media?: string;
+        kind?: string;
+        isFlagged?: boolean;
+        lastFlagUpdate?: string;
+        rarity?: number;
+        rarityRank?: number;
+        collection?: Collection;
+        attributes?: TokenAttribute[];
+        lastSale?: {
+            price: Price;
+            timestamp: string;
+        };
+        owner?: string;
+        lastAppraisalValue?: number;
+    };
+    market?: {
+        floorAsk?: {
+            id: string;
+            price: Price;
+            maker: string;
+            validFrom: number;
+            validUntil: number;
+            source?: Source;
+        };
+        topBid?: {
+            id: string;
+            price: Price;
+            maker: string;
+            validFrom: number;
+            validUntil: number;
+        };
+    };
+}
+
+export interface TokenBootstrapParams extends ContinuationParams {
+    collection?: string;
+    tokens?: string[];
+    includeAttributes?: boolean;
+    includeTopBid?: boolean;
+    includeDynamicPricing?: boolean;
+    includeLastSale?: boolean;
+    includeRawData?: boolean;
+}
+
 export interface TokenFloorParams {
     tokens?: string[];
     collection?: string;
@@ -96,10 +154,7 @@ export interface TokenFloorParams {
 
 export interface TokenFloorData {
     id: string;
-    collection: {
-        id: string;
-        name: string;
-    };
+    collection: Collection;
     contract: string;
     tokenId: string;
     floorAsk: {
@@ -112,10 +167,8 @@ export interface TokenFloorData {
     };
 }
 
-export interface TokenAsksParams {
+export interface TokenAsksParams extends ContinuationParams, SortParams {
     token: string;
-    sortBy?: "price" | "createdAt";
-    sortDirection?: "asc" | "desc";
     normalizeRoyalties?: boolean;
     includeCriteriaMetadata?: boolean;
     includeRawData?: boolean;
@@ -138,12 +191,7 @@ export interface TokenAskData {
                 name?: string;
                 image?: string;
             };
-            collection?: TokenCollection & {
-                royalties?: Array<{
-                    bps: number;
-                    recipient: string;
-                }>;
-            };
+            collection: Collection;
         };
     };
     dynamicPricing?: {
@@ -152,63 +200,67 @@ export interface TokenAskData {
     };
 }
 
-/**
- * Parameters for bootstrapping token data
- */
-export interface TokenBootstrapParams {
-    collection?: string;
-    tokens?: string[];
-    includeAttributes?: boolean;
-    includeTopBid?: boolean;
-    includeDynamicPricing?: boolean;
-    includeLastSale?: boolean;
+export interface TokenBidsParams extends ContinuationParams, SortParams {
+    token: string;
+    normalizeRoyalties?: boolean;
+    includeCriteriaMetadata?: boolean;
     includeRawData?: boolean;
+    includeDynamicPricing?: boolean;
+    currencies?: string[];
 }
 
-/**
- * Comprehensive token data structure
- */
-export interface TokenData {
+export interface TokenBidData {
+    id: string;
+    price: Price;
+    maker: string;
+    validFrom: number;
+    validUntil: number;
+    source: Source;
+    criteria?: {
+        kind: string;
+        data: {
+            token: {
+                tokenId: string;
+                name?: string;
+                image?: string;
+            };
+            collection: Collection;
+        };
+    };
+    dynamicPricing?: {
+        kind: string;
+        data: Record<string, any>;
+    };
+}
+
+export interface TokenActivityParams extends ContinuationParams, SortParams {
+    token: string;
+    types?: ActivityType[];
+    includeMetadata?: boolean;
+}
+
+export interface TokenActivityData {
+    id: string;
+    type: ActivityType;
+    fromAddress: string;
+    toAddress?: string;
+    price?: Price;
+    amount?: number;
+    timestamp: number;
     token: {
         contract: string;
         tokenId: string;
         name?: string;
-        description?: string;
         image?: string;
-        media?: string;
-        kind?: string;
-        isFlagged?: boolean;
-        lastFlagUpdate?: string;
-        rarity?: number;
-        rarityRank?: number;
-        collection?: {
-            id: string;
-            name: string;
-            image?: string;
-            slug?: string;
-        };
-        attributes?: TokenAttribute[];
-        lastSale?: {
-            price: number;
-            timestamp: string;
-        };
-        owner?: string;
-        lastAppraisalValue?: number;
+        collection?: Collection;
     };
-    market?: {
-        floorAsk?: {
-            id: string;
-            price: number;
-            maker: string;
-            validFrom: number;
-            validUntil: number;
-        };
-        topBid?: {
-            id: string;
-            price: number;
-            maker: string;
-            validFrom: number;
-            validUntil: number;
-        };
+    order?: {
+        id: string;
+        side: "buy" | "sell";
+        source?: Source;
+    };
+    event?: {
+        id: string;
+        kind: string;
     };
 }

@@ -155,3 +155,19 @@ export interface OwnersIntersectionData {
         ownershipScore: number;
     };
 }
+
+/**
+ * Response data for owners distribution
+ * @see https://docs.reservoir.tools/reference/getcollectionscollectionownersdistributionv1
+ */
+export interface OwnersDistributionData {
+    ownership: {
+        tokenCount: number;
+        ownerCount: number;
+        ownerDistribution: Array<{
+            tokenCount: number;
+            ownerCount: number;
+            percentage: number;
+        }>;
+    };
+}

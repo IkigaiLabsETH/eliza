@@ -4,7 +4,7 @@ interface PerformanceMetric {
     operation: string;
     duration: number;
     success: boolean;
-    metadata?: Record<string, any>;
+    metadata?: Record<string, any> | undefined;
     timestamp: string;
 }
 
@@ -13,15 +13,21 @@ interface PerformanceAlert {
     message: string;
     threshold: number;
     currentValue: number;
-    metadata?: Record<string, any>;
+    metadata?: Record<string, any> | undefined;
     timestamp: string;
+}
+
+interface MetricOptions {
+    operation?: string | undefined;
+    timeRange?: number | undefined;
+    success?: boolean | undefined;
 }
 
 export class PerformanceMonitor extends EventEmitter {
     private static instance: PerformanceMonitor;
     private metrics: PerformanceMetric[] = [];
     private readonly maxMetrics: number = 1000;
-    private readonly alertThresholds = {
+    private readonly alertThresholds: Record<string, number> = {
         latency: 1000, // 1 second
         errorRate: 0.05, // 5%
         throughput: 100, // requests per minute
@@ -41,10 +47,9 @@ export class PerformanceMonitor extends EventEmitter {
 
     public startOperation(
         operation: string,
-        metadata?: Record<string, any>
+        metadata?: Record<string, any> | undefined
     ): () => void {
         const startTime = Date.now();
-
         return () => {
             const duration = Date.now() - startTime;
             this.recordMetric({
@@ -57,14 +62,14 @@ export class PerformanceMonitor extends EventEmitter {
     }
 
     public recordMetric(metric: Omit<PerformanceMetric, "timestamp">): void {
-        const fullMetric = {
+        const fullMetric: PerformanceMetric = {
             ...metric,
+            metadata: metric.metadata,
             timestamp: new Date().toISOString(),
         };
 
         this.metrics.push(fullMetric);
 
-        // Keep only the most recent metrics
         if (this.metrics.length > this.maxMetrics) {
             this.metrics = this.metrics.slice(-this.maxMetrics);
         }
@@ -72,13 +77,7 @@ export class PerformanceMonitor extends EventEmitter {
         this.checkThresholds(fullMetric);
     }
 
-    public getMetrics(
-        options: {
-            operation?: string;
-            timeRange?: number;
-            success?: boolean;
-        } = {}
-    ): PerformanceMetric[] {
+    public getMetrics(options: MetricOptions = {}): PerformanceMetric[] {
         const { operation, timeRange, success } = options;
         const now = Date.now();
 
@@ -126,42 +125,45 @@ export class PerformanceMonitor extends EventEmitter {
     }
 
     private checkThresholds(metric: PerformanceMetric): void {
-        // Check latency threshold
-        if (metric.duration > this.alertThresholds.latency) {
-            this.emitAlert({
+        const latencyThreshold = this.alertThresholds.latency;
+        if (latencyThreshold && metric.duration > latencyThreshold) {
+            const alert: PerformanceAlert = {
                 type: "latency",
                 message: `High latency detected for operation ${metric.operation}`,
-                threshold: this.alertThresholds.latency,
+                threshold: latencyThreshold,
                 currentValue: metric.duration,
                 metadata: metric.metadata,
                 timestamp: new Date().toISOString(),
-            });
+            };
+            this.emitAlert(alert);
         }
 
-        // Check error rate threshold
         const errorRate = this.getErrorRate(metric.operation, 60000);
-        if (errorRate > this.alertThresholds.errorRate) {
-            this.emitAlert({
+        const errorRateThreshold = this.alertThresholds.errorRate;
+        if (errorRateThreshold && errorRate > errorRateThreshold) {
+            const alert: PerformanceAlert = {
                 type: "error_rate",
                 message: `High error rate detected for operation ${metric.operation}`,
-                threshold: this.alertThresholds.errorRate,
+                threshold: errorRateThreshold,
                 currentValue: errorRate,
                 metadata: metric.metadata,
                 timestamp: new Date().toISOString(),
-            });
+            };
+            this.emitAlert(alert);
         }
 
-        // Check throughput threshold
         const throughput = this.getThroughput(metric.operation);
-        if (throughput > this.alertThresholds.throughput) {
-            this.emitAlert({
+        const throughputThreshold = this.alertThresholds.throughput;
+        if (throughputThreshold && throughput > throughputThreshold) {
+            const alert: PerformanceAlert = {
                 type: "throughput",
                 message: `High throughput detected for operation ${metric.operation}`,
-                threshold: this.alertThresholds.throughput,
+                threshold: throughputThreshold,
                 currentValue: throughput,
                 metadata: metric.metadata,
                 timestamp: new Date().toISOString(),
-            });
+            };
+            this.emitAlert(alert);
         }
     }
 
@@ -170,7 +172,6 @@ export class PerformanceMonitor extends EventEmitter {
     }
 
     private setupPeriodicChecks(): void {
-        // Clean up old metrics every hour
         setInterval(() => {
             const oneHourAgo = Date.now() - 3600000;
             this.metrics = this.metrics.filter(
@@ -178,7 +179,6 @@ export class PerformanceMonitor extends EventEmitter {
             );
         }, 3600000);
 
-        // Perform periodic threshold checks every minute
         setInterval(() => {
             const operations = [
                 ...new Set(this.metrics.map((m) => m.operation)),
@@ -188,34 +188,40 @@ export class PerformanceMonitor extends EventEmitter {
                 const throughput = this.getThroughput(operation);
                 const avgLatency = this.getAverageLatency(operation, 60000);
 
-                if (errorRate > this.alertThresholds.errorRate) {
-                    this.emitAlert({
+                const errorRateThreshold = this.alertThresholds.errorRate;
+                if (errorRateThreshold && errorRate > errorRateThreshold) {
+                    const alert: PerformanceAlert = {
                         type: "error_rate",
                         message: `Sustained high error rate for operation ${operation}`,
-                        threshold: this.alertThresholds.errorRate,
+                        threshold: errorRateThreshold,
                         currentValue: errorRate,
                         timestamp: new Date().toISOString(),
-                    });
+                    };
+                    this.emitAlert(alert);
                 }
 
-                if (throughput > this.alertThresholds.throughput) {
-                    this.emitAlert({
+                const throughputThreshold = this.alertThresholds.throughput;
+                if (throughputThreshold && throughput > throughputThreshold) {
+                    const alert: PerformanceAlert = {
                         type: "throughput",
                         message: `Sustained high throughput for operation ${operation}`,
-                        threshold: this.alertThresholds.throughput,
+                        threshold: throughputThreshold,
                         currentValue: throughput,
                         timestamp: new Date().toISOString(),
-                    });
+                    };
+                    this.emitAlert(alert);
                 }
 
-                if (avgLatency > this.alertThresholds.latency) {
-                    this.emitAlert({
+                const latencyThreshold = this.alertThresholds.latency;
+                if (latencyThreshold && avgLatency > latencyThreshold) {
+                    const alert: PerformanceAlert = {
                         type: "latency",
                         message: `Sustained high latency for operation ${operation}`,
-                        threshold: this.alertThresholds.latency,
+                        threshold: latencyThreshold,
                         currentValue: avgLatency,
                         timestamp: new Date().toISOString(),
-                    });
+                    };
+                    this.emitAlert(alert);
                 }
             });
         }, 60000);

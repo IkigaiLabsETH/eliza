@@ -47,14 +47,15 @@ export class OwnerService extends BaseReservoirService {
 
             endOperation();
             return response.collections;
-        } catch (error) {
+        } catch (error: unknown) {
             console.error("Error fetching common collections:", error);
             this.performanceMonitor.recordMetric({
                 operation: "getCommonCollections",
                 duration: 0,
                 success: false,
                 metadata: {
-                    error: error.message,
+                    error:
+                        error instanceof Error ? error.message : String(error),
                     params,
                 },
             });
@@ -100,14 +101,15 @@ export class OwnerService extends BaseReservoirService {
 
             endOperation();
             return response;
-        } catch (error) {
+        } catch (error: unknown) {
             console.error("Error fetching owners:", error);
             this.performanceMonitor.recordMetric({
                 operation: "getOwners",
                 duration: 0,
                 success: false,
                 metadata: {
-                    error: error.message,
+                    error:
+                        error instanceof Error ? error.message : String(error),
                     params,
                 },
             });
@@ -155,14 +157,15 @@ export class OwnerService extends BaseReservoirService {
 
             endOperation();
             return response;
-        } catch (error) {
+        } catch (error: unknown) {
             console.error("Error fetching owners intersection:", error);
             this.performanceMonitor.recordMetric({
                 operation: "getOwnersIntersection",
                 duration: 0,
                 success: false,
                 metadata: {
-                    error: error.message,
+                    error:
+                        error instanceof Error ? error.message : String(error),
                     params,
                 },
             });
@@ -209,14 +212,15 @@ export class OwnerService extends BaseReservoirService {
 
             endOperation();
             return response;
-        } catch (error) {
+        } catch (error: unknown) {
             console.error("Error fetching owners distribution:", error);
             this.performanceMonitor.recordMetric({
                 operation: "getOwnersDistribution",
                 duration: 0,
                 success: false,
                 metadata: {
-                    error: error.message,
+                    error:
+                        error instanceof Error ? error.message : String(error),
                     collection,
                 },
             });
@@ -263,7 +267,7 @@ export class OwnerService extends BaseReservoirService {
 
             endOperation();
             return response;
-        } catch (error) {
+        } catch (error: unknown) {
             console.error(
                 "Error fetching collections set owners distribution:",
                 error
@@ -273,7 +277,8 @@ export class OwnerService extends BaseReservoirService {
                 duration: 0,
                 success: false,
                 metadata: {
-                    error: error.message,
+                    error:
+                        error instanceof Error ? error.message : String(error),
                     collectionsSetId,
                 },
             });

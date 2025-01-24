@@ -2,18 +2,15 @@ import { BaseReservoirService, ReservoirServiceConfig } from "./base";
 import { IAgentRuntime } from "@elizaos/core";
 import { NFTCollection } from "../../types";
 import {
-    CollectionSearchParams,
-    CollectionSearchData,
-    TrendingCollectionsParams,
-    TrendingCollectionData,
-    CollectionActivityParams,
+    CollectionData,
     CollectionActivityData,
+    CollectionActivityParams,
     CollectionBidsParams,
     CollectionBidData,
-    TokenMetadata,
     CollectionV7Params,
     CollectionV7Response,
-} from "./types";
+} from "./types/collection";
+import { ReservoirError, ReservoirErrorCode } from "./errors";
 
 export class CollectionService extends BaseReservoirService {
     constructor(config: ReservoirServiceConfig = {}) {
@@ -53,87 +50,43 @@ export class CollectionService extends BaseReservoirService {
                 duration: 0,
                 success: false,
                 metadata: {
-                    error: error.message,
+                    error:
+                        error instanceof Error ? error.message : String(error),
                     params,
                 },
             });
-            throw error;
-        }
-    }
-
-    /**
-     * Search for collections by name or other criteria
-     * @see https://docs.reservoir.tools/reference/getcollectionsv6
-     */
-    async searchCollections(
-        params: CollectionSearchParams,
-        runtime: IAgentRuntime
-    ): Promise<CollectionSearchData[]> {
-        const endOperation = this.performanceMonitor.startOperation(
-            "searchCollections",
-            { params }
-        );
-
-        try {
-            const response = await this.cachedRequest<{
-                collections: CollectionSearchData[];
-            }>("/collections/v6", params, runtime, {
-                ttl: 300, // 5 minutes cache
-                context: "collections_search",
+            if (error instanceof ReservoirError) {
+                throw error;
+            }
+            if (error instanceof Error) {
+                const mockError = error as any;
+                if (mockError.response?.status === 401) {
+                    throw new ReservoirError({
+                        message: "Invalid API key",
+                        code: ReservoirErrorCode.API_KEY_INVALID,
+                    });
+                }
+                if (mockError.response?.status === 429) {
+                    throw new ReservoirError({
+                        message: "Rate limit exceeded",
+                        code: ReservoirErrorCode.RATE_LIMIT,
+                    });
+                }
+                if (mockError.response?.status === 404) {
+                    throw new ReservoirError({
+                        message: "Collection not found",
+                        code: ReservoirErrorCode.COLLECTION_NOT_FOUND,
+                    });
+                }
+                throw new ReservoirError({
+                    message: "API Error: " + mockError.message,
+                    code: ReservoirErrorCode.HttpError,
+                });
+            }
+            throw new ReservoirError({
+                message: "Unknown error fetching collections",
+                code: ReservoirErrorCode.UnknownError,
             });
-
-            endOperation();
-            return response.collections;
-        } catch (error) {
-            console.error("Error searching collections:", error);
-            this.performanceMonitor.recordMetric({
-                operation: "searchCollections",
-                duration: 0,
-                success: false,
-                metadata: {
-                    error: error.message,
-                    params,
-                },
-            });
-            throw error;
-        }
-    }
-
-    /**
-     * Get trending collections based on volume, sales, etc.
-     * @see https://docs.reservoir.tools/reference/getcollectionstrendingv1
-     */
-    async getTrendingCollections(
-        params: TrendingCollectionsParams,
-        runtime: IAgentRuntime
-    ): Promise<TrendingCollectionData[]> {
-        const endOperation = this.performanceMonitor.startOperation(
-            "getTrendingCollections",
-            { params }
-        );
-
-        try {
-            const response = await this.cachedRequest<{
-                collections: TrendingCollectionData[];
-            }>("/collections/trending/v1", params, runtime, {
-                ttl: 300,
-                context: "collections_trending",
-            });
-
-            endOperation();
-            return response.collections;
-        } catch (error) {
-            console.error("Error fetching trending collections:", error);
-            this.performanceMonitor.recordMetric({
-                operation: "getTrendingCollections",
-                duration: 0,
-                success: false,
-                metadata: {
-                    error: error.message,
-                    params,
-                },
-            });
-            throw error;
         }
     }
 
@@ -168,33 +121,22 @@ export class CollectionService extends BaseReservoirService {
                 duration: 0,
                 success: false,
                 metadata: {
-                    error: error.message,
+                    error:
+                        error instanceof Error ? error.message : String(error),
                     params,
                 },
             });
-            throw error;
+            if (error instanceof Error) {
+                throw new ReservoirError({
+                    message: error.message,
+                    code: ReservoirErrorCode.HttpError,
+                });
+            }
+            throw new ReservoirError({
+                message: "Unknown error fetching collection activity",
+                code: ReservoirErrorCode.UnknownError,
+            });
         }
-    }
-
-    /**
-     * Get collection activity feed with default parameters
-     * @see https://docs.reservoir.tools/reference/getcollectionsactivityv6
-     */
-    async getCollectionActivityFeed(
-        collection: string,
-        runtime: IAgentRuntime
-    ): Promise<CollectionActivityData[]> {
-        return this.getCollectionActivity(
-            {
-                collection,
-                limit: 20,
-                sortBy: "timestamp",
-                sortDirection: "desc",
-                includeMetadata: true,
-                includeTokenMetadata: true,
-            },
-            runtime
-        );
     }
 
     /**
@@ -227,11 +169,21 @@ export class CollectionService extends BaseReservoirService {
                 duration: 0,
                 success: false,
                 metadata: {
-                    error: error.message,
+                    error:
+                        error instanceof Error ? error.message : String(error),
                     params,
                 },
             });
-            throw error;
+            if (error instanceof Error) {
+                throw new ReservoirError({
+                    message: error.message,
+                    code: ReservoirErrorCode.HttpError,
+                });
+            }
+            throw new ReservoirError({
+                message: "Unknown error fetching collection bids",
+                code: ReservoirErrorCode.UnknownError,
+            });
         }
     }
 
@@ -266,60 +218,29 @@ export class CollectionService extends BaseReservoirService {
             );
 
             const mappedCollections = response.collections.map(
-                (collection) => ({
-                    address: collection.id,
-                    name: collection.name,
-                    symbol: collection.symbol,
-                    description: collection.description,
-                    imageUrl: collection.image,
-                    externalUrl: collection.externalUrl,
-                    twitterUsername: collection.twitterUsername,
-                    discordUrl: collection.discordUrl,
-                    verified:
-                        collection.openseaVerificationStatus === "verified",
-                    floorPrice: collection.floorAsk?.price?.amount?.native || 0,
-                    topBid: collection.topBid?.price?.amount?.native || 0,
-                    volume24h: collection.volume?.["1day"] || 0,
-                    volume7d: collection.volume?.["7day"] || 0,
-                    volume30d: collection.volume?.["30day"] || 0,
-                    volumeAll: collection.volume?.allTime || 0,
-                    marketCap: collection.tokenCount
-                        ? (collection.floorAsk?.price?.amount?.native || 0) *
-                          collection.tokenCount
-                        : 0,
-                    totalSupply: collection.tokenCount || 0,
-                    holders: collection.ownerCount || 0,
-                    sales24h: collection.salesCount?.["1day"] || 0,
-                    sales7d: collection.salesCount?.["7day"] || 0,
-                    sales30d: collection.salesCount?.["30day"] || 0,
-                    salesAll: collection.salesCount?.allTime || 0,
-                    lastSale: collection.lastSale
-                        ? {
-                              price:
-                                  collection.lastSale.price?.amount?.native ||
-                                  0,
-                              timestamp: collection.lastSale.timestamp,
-                              tokenId: collection.lastSale.token?.tokenId,
-                          }
-                        : undefined,
-                    royalties: collection.creatorFees?.length
-                        ? {
-                              bps: collection.creatorFees[0].bps,
-                              recipient: collection.creatorFees[0].recipient,
-                          }
-                        : undefined,
-                    attributes: collection.attributes?.map((attr) => ({
-                        key: attr.key,
-                        kind: attr.kind,
-                        count: attr.count,
-                    })),
-                    marketplaces: collection.marketplaces?.map((m) => ({
-                        name: m.name,
-                        url: m.url,
-                        icon: m.icon,
-                    })),
-                    lastUpdate: new Date().toISOString(),
-                })
+                (collection: CollectionData) =>
+                    ({
+                        address: collection.id,
+                        name: collection.name,
+                        symbol: collection.symbol || "",
+                        description: collection.description || "",
+                        imageUrl: collection.image || "",
+                        externalUrl: collection.externalUrl || "",
+                        twitterUsername: collection.twitterUsername || "",
+                        discordUrl: collection.discordUrl || "",
+                        verified:
+                            collection.openseaVerificationStatus === "verified",
+                        floorPrice: collection.stats?.floorAsk?.price || 0,
+                        topBid: collection.stats?.topBid?.price || 0,
+                        volume24h: collection.stats?.volume24h || 0,
+                        volume7d: collection.stats?.volume7d || 0,
+                        volume30d: collection.stats?.volume30d || 0,
+                        volumeAll: collection.stats?.volumeAll || 0,
+                        marketCap: collection.stats?.marketCap || 0,
+                        totalSupply: collection.tokenCount || 0,
+                        holders: collection.stats?.numOwners || 0,
+                        lastUpdate: new Date().toISOString(),
+                    }) as NFTCollection
             );
 
             endOperation();
@@ -331,160 +252,21 @@ export class CollectionService extends BaseReservoirService {
                 duration: 0,
                 success: false,
                 metadata: {
-                    error: error.message,
+                    error:
+                        error instanceof Error ? error.message : String(error),
                     limit,
                 },
             });
-            throw error;
-        }
-    }
-
-    /**
-     * Get collection tokens
-     * @see https://docs.reservoir.tools/reference/getcollectionstokensv6
-     */
-    async getCollectionTokens(
-        collection: string,
-        runtime: IAgentRuntime
-    ): Promise<TokenMetadata[]> {
-        const endOperation = this.performanceMonitor.startOperation(
-            "getCollectionTokens",
-            { collection }
-        );
-
-        try {
-            const response = await this.cachedRequest<{
-                tokens: TokenMetadata[];
-                continuation?: string;
-            }>(
-                "/collections/tokens/v6",
-                {
-                    collection,
-                    limit: 20,
-                    includeAttributes: true,
-                    includeTopBid: true,
-                    includeLastSale: true,
-                },
-                runtime,
-                {
-                    ttl: 300, // 5 minutes cache
-                    context: "collection_tokens",
-                }
-            );
-
-            endOperation();
-            return response.tokens;
-        } catch (error) {
-            console.error("Error fetching collection tokens:", error);
-            this.performanceMonitor.recordMetric({
-                operation: "getCollectionTokens",
-                duration: 0,
-                success: false,
-                metadata: {
-                    error: error.message,
-                    collection,
-                },
+            if (error instanceof Error) {
+                throw new ReservoirError({
+                    message: error.message,
+                    code: ReservoirErrorCode.HttpError,
+                });
+            }
+            throw new ReservoirError({
+                message: "Unknown error fetching top collections",
+                code: ReservoirErrorCode.UnknownError,
             });
-            throw error;
         }
-    }
-
-    /**
-     * Get collection attributes
-     * @see https://docs.reservoir.tools/reference/getcollectionsattributesv2
-     */
-    async getCollectionAttributes(
-        collection: string,
-        runtime: IAgentRuntime
-    ): Promise<
-        Array<{
-            key: string;
-            kind: string;
-            count: number;
-            values: Array<{
-                value: string;
-                count: number;
-                floorAskPrice?: number;
-                topBidValue?: number;
-            }>;
-        }>
-    > {
-        const endOperation = this.performanceMonitor.startOperation(
-            "getCollectionAttributes",
-            { collection }
-        );
-
-        try {
-            const response = await this.cachedRequest<{
-                attributes: Array<{
-                    key: string;
-                    kind: string;
-                    count: number;
-                    values: Array<{
-                        value: string;
-                        count: number;
-                        floorAskPrice?: number;
-                        topBidValue?: number;
-                    }>;
-                }>;
-            }>(
-                "/collections/attributes/v2",
-                {
-                    collection,
-                    includeTopBid: true,
-                    includeFloorAsk: true,
-                },
-                runtime,
-                {
-                    ttl: 300, // 5 minutes cache
-                    context: "collection_attributes",
-                }
-            );
-
-            endOperation();
-            return response.attributes;
-        } catch (error) {
-            console.error("Error fetching collection attributes:", error);
-            this.performanceMonitor.recordMetric({
-                operation: "getCollectionAttributes",
-                duration: 0,
-                success: false,
-                metadata: {
-                    error: error.message,
-                    collection,
-                },
-            });
-            throw error;
-        }
-    }
-
-    /**
-     * Search for collections with default parameters optimized for discovery
-     * @param query Search query string
-     * @param runtime Agent runtime
-     */
-    async quickSearchCollections(
-        query: string,
-        runtime: IAgentRuntime,
-        options: {
-            chain?: string;
-            limit?: number;
-            includeMetadata?: boolean;
-        } = {}
-    ): Promise<CollectionSearchData[]> {
-        return this.searchCollections(
-            {
-                name: query,
-                chain: options.chain,
-                limit: options.limit || 20,
-                includeMetadata: options.includeMetadata ?? true,
-                includeTopBid: true,
-                includeAttributes: true,
-                includeOwnerCount: true,
-                includeMintStages: true,
-                includeMarketplaces: true,
-            },
-            runtime
-        );
     }
 }

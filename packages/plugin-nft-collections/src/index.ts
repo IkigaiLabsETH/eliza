@@ -1,23 +1,18 @@
-import { Plugin } from "@elizaos/core";
+import type { IAgentRuntime } from "@elizaos/core";
 import { createNftCollectionProvider } from "./providers/nft-collections";
-import {
-    getCollectionsAction,
-    getThinFloorNFTsAction,
-    manageWatchlistAction,
-} from "./actions/get-collections";
-import { listNFTAction } from "./actions/list-nft";
+import { listNFTAction, acceptNFTOfferAction } from "./actions/list-nft";
 import { sweepFloorArbitrageAction } from "./actions/sweep-floor";
 
-import {
-    BaseReservoirService,
-    ReservoirServiceConfig,
-} from "./services/reservoir/base";
+import { ReservoirService } from "./services/reservoir";
+import type { ReservoirServiceConfig } from "./services/reservoir/types/common";
 import { MemoryCacheManager } from "./services/cache-manager";
 import { RateLimiter } from "./services/rate-limiter";
 import { MarketIntelligenceService } from "./services/market-intelligence";
 import { SocialAnalyticsService } from "./services/social-analytics";
 import { validateEnvironmentVariables } from "./utils/validation";
-import { IAgentRuntime } from "@elizaos/core";
+import type { TokenData, TokenMarket } from "./services/reservoir/types/token";
+import type { Collection } from "./services/reservoir/types/common";
+import type { OrderData } from "./services/reservoir/types/order";
 
 // Define configuration interfaces
 interface CachingConfig {
@@ -53,401 +48,214 @@ interface NFTCollectionsConfig extends BaseConfig {
     rateLimiter?: RateLimiter | undefined;
 }
 
-// Default configuration
-const defaultConfig: NFTCollectionsConfig = {
-    caching: {
-        enabled: process.env.CACHE_ENABLED === "true" || true,
-        ttl: Number(process.env.CACHE_TTL) || 3600000, // 1 hour
-        maxSize: Number(process.env.CACHE_MAX_SIZE) || 1000,
-    },
-    security: {
-        rateLimit: {
-            enabled: process.env.RATE_LIMIT_ENABLED === "true" || true,
-            maxRequests: Number(process.env.RATE_LIMIT_MAX_REQUESTS) || 100,
-            windowMs: Number(process.env.RATE_LIMIT_WINDOW_MS) || 60000,
-        },
-    },
-    maxConcurrent: Number(process.env.MAX_CONCURRENT) || 5,
-    maxRetries: Number(process.env.MAX_RETRIES) || 3,
-    batchSize: Number(process.env.BATCH_SIZE) || 20,
-    reservoirApiKey: process.env.RESERVOIR_API_KEY ?? "",
-    openSeaApiKey: process.env.OPENSEA_API_KEY,
-    twitterApiKey: process.env.TWITTER_API_KEY,
-    cacheManager: undefined,
-    rateLimiter: undefined,
-};
-
-// Collection response types
-interface CollectionResponse {
-    collections: Array<{
-        name: string;
-        id: string;
-        floorPrice: number;
-        volume24h: number;
-        marketCap: number;
-        holders: number;
-    }>;
-}
-
-interface Collection {
-    name: string;
-    address: string;
-    floorPrice: number;
-    volume24h: number;
-    marketCap: number;
-    holders: number;
-}
-
 interface NFT {
     collectionAddress: string;
     tokenId: string;
-    name?: string;
-    image?: string;
+    name: string | undefined;
+    description: string | undefined;
+    image: string | undefined;
+    attributes: Array<{
+        key: string;
+        value: string;
+    }>;
+    lastSale?:
+        | {
+              price: number;
+              timestamp: string;
+          }
+        | undefined;
+    market?: TokenMarket | undefined;
 }
 
 interface FloorListing {
-    price: number;
-    tokenId: string;
     collectionAddress: string;
+    tokenId: string;
+    price: number;
+    seller: string;
+    marketplace: string;
+    validFrom: string;
+    validUntil: string;
 }
 
 interface Listing {
     status: string;
     marketplaceUrl: string;
-    transactionHash?: string;
+    transactionHash: string | undefined;
 }
 
 // Extended ReservoirService class
-class ExtendedReservoirService extends BaseReservoirService {
-    private runtime: IAgentRuntime | undefined;
+class ExtendedReservoirService extends ReservoirService {
+    private runtime: IAgentRuntime;
 
-    constructor(config: ReservoirServiceConfig) {
+    constructor(config: ReservoirServiceConfig, runtime: IAgentRuntime) {
         super(config);
-    }
-
-    setRuntime(runtime: IAgentRuntime) {
         this.runtime = runtime;
     }
 
-    async getTopCollections(
-        runtime: IAgentRuntime,
-        limit: number = 10
-    ): Promise<Collection[]> {
-        const endpoint = `/collections/v6`;
-        const params = {
-            limit,
-            sortBy: "1DayVolume",
-            sortDirection: "desc",
-        };
+    async getTopCollections(limit: number = 10): Promise<Collection[]> {
+        try {
+            const response = await this.collections.getCollections(
+                {
+                    limit,
+                    sortBy: "1DayVolume",
+                    sortDirection: "desc",
+                },
+                this.runtime
+            );
 
-        const response = await this.makeRequest<CollectionResponse>(
-            endpoint,
-            params,
-            0,
-            runtime
-        );
-        return response.collections.map((collection) => ({
-            name: collection.name,
-            address: collection.id,
-            floorPrice: collection.floorPrice,
-            volume24h: collection.volume24h,
-            marketCap: collection.marketCap,
-            holders: collection.holders,
-        }));
+            return response.collections;
+        } catch (error) {
+            throw error;
+        }
     }
 
-    async getOwnedNFTs(userId: string): Promise<NFT[]> {
-        if (!this.runtime) throw new Error("Runtime not set");
-        const endpoint = `/users/${userId}/tokens/v7`;
-        const response = await this.makeRequest<{ tokens: NFT[] }>(
-            endpoint,
-            {},
-            0,
-            this.runtime
-        );
-        return response.tokens;
+    async getOwnedNFTs(address: string): Promise<NFT[]> {
+        try {
+            const response = await this.tokens.getTokens(
+                {
+                    tokens: [],
+                    collection: address,
+                    includeAttributes: true,
+                    includeTopBid: true,
+                    includeLastSale: true,
+                },
+                this.runtime
+            );
+
+            return response.map(
+                (tokenData: TokenData): NFT => ({
+                    collectionAddress: tokenData.token.contract,
+                    tokenId: tokenData.token.tokenId,
+                    name: tokenData.token.name,
+                    description: tokenData.token.description,
+                    image: tokenData.token.image,
+                    attributes:
+                        tokenData.token.attributes?.map((attr) => ({
+                            key: attr.key,
+                            value: attr.value,
+                        })) || [],
+                    lastSale: tokenData.token.lastSale
+                        ? {
+                              price: Number(tokenData.token.lastSale.price),
+                              timestamp: tokenData.token.lastSale.timestamp,
+                          }
+                        : undefined,
+                    market: tokenData.market,
+                })
+            );
+        } catch (error) {
+            throw error;
+        }
     }
 
     async getLastSalePrice(params: {
         collectionAddress: string;
         tokenId: string;
     }): Promise<number | undefined> {
-        if (!this.runtime) throw new Error("Runtime not set");
-        const endpoint = `/sales/v4`;
-        const queryParams = {
-            collection: params.collectionAddress,
-            tokenId: params.tokenId,
-            limit: 1,
-            sortBy: "timestamp",
-            sortDirection: "desc",
-        };
-
-        const response = await this.makeRequest<{
-            sales: Array<{ price: number }>;
-        }>(endpoint, queryParams, 0, this.runtime);
-        return response.sales[0]?.price;
-    }
-
-    async getFloorListings(params: {
-        collection: string;
-        limit: number;
-        sortBy: string;
-    }): Promise<FloorListing[]> {
-        if (!this.runtime) throw new Error("Runtime not set");
-        const endpoint = `/tokens/floor/v1`;
-        const response = await this.makeRequest<{ tokens: FloorListing[] }>(
-            endpoint,
-            params,
-            0,
-            this.runtime
-        );
-        return response.tokens;
-    }
-
-    async createListing(params: {
-        tokenId: string;
-        collectionAddress: string;
-        price: number;
-        marketplace: string;
-        expirationTime: number;
-    }): Promise<Listing> {
-        if (!this.runtime) throw new Error("Runtime not set");
-        const endpoint = `/order/v3`;
-        const response = await this.makeRequest<Listing>(
-            endpoint,
-            {
-                ...params,
-                side: "sell",
-                orderKind: "seaport",
-            },
-            0,
-            this.runtime
-        );
-        return response;
-    }
-}
-
-export class NFTCollectionsPlugin {
-    private marketIntelligence: MarketIntelligenceService | undefined;
-    private socialAnalytics: SocialAnalyticsService | undefined;
-    private reservoirService: ExtendedReservoirService | undefined;
-
-    async initialize(runtime: IAgentRuntime): Promise<void> {
         try {
-            // Initialize CacheManager and RateLimiter
-            const cacheManager = defaultConfig.caching.enabled
-                ? new MemoryCacheManager({
-                      ttl: defaultConfig.caching.ttl,
-                      maxSize: defaultConfig.caching.maxSize,
-                  })
-                : undefined;
-
-            const rateLimiter = defaultConfig.security.rateLimit.enabled
-                ? new RateLimiter({
-                      maxRequests: defaultConfig.security.rateLimit.maxRequests,
-                      windowMs: defaultConfig.security.rateLimit.windowMs,
-                  })
-                : undefined;
-
-            // Initialize Reservoir service
-            const reservoirConfig = {
-                apiKey: defaultConfig.reservoirApiKey,
-                ...(cacheManager && { cacheManager }),
-                ...(rateLimiter && { rateLimiter }),
-                maxConcurrent: defaultConfig.maxConcurrent ?? 5,
-                maxRetries: defaultConfig.maxRetries ?? 3,
-                batchSize: defaultConfig.batchSize ?? 20,
-                baseUrl: "https://api.reservoir.tools",
-                timeout: 30000,
-                retryStrategy: {
-                    maxRetries: 3,
-                    baseDelay: 1000,
-                    jitter: true,
+            const response = await this.tokens.getTokens(
+                {
+                    tokens: [`${params.collectionAddress}:${params.tokenId}`],
+                    includeLastSale: true,
                 },
-                cacheConfig: {
-                    enabled: true,
-                    defaultTTL: 300,
-                },
-                telemetry: {
-                    enabled: true,
-                    serviceName: "ikigai-nft-reservoir",
-                },
-            };
-
-            this.reservoirService = new ExtendedReservoirService(
-                reservoirConfig
+                this.runtime
             );
-            this.reservoirService.setRuntime(runtime);
 
-            // Initialize other services
-            this.marketIntelligence = new MarketIntelligenceService({
-                openSeaApiKey: defaultConfig.openSeaApiKey,
-                reservoirApiKey: defaultConfig.reservoirApiKey,
-                cacheManager,
-                rateLimiter,
-                maxRetries: defaultConfig.maxRetries,
-                retryDelay: 1000,
-                circuitBreakerOptions: {
-                    failureThreshold: 5,
-                    resetTimeout: 60000,
-                },
-            });
-
-            this.socialAnalytics = new SocialAnalyticsService({
-                twitterApiKey: defaultConfig.twitterApiKey,
-                cacheManager,
-                rateLimiter,
-                maxRetries: defaultConfig.maxRetries,
-                retryDelay: 1000,
-                circuitBreakerOptions: {
-                    failureThreshold: 5,
-                    resetTimeout: 60000,
-                },
-            });
-
-            // Initialize API keys with runtime context
-            await this.marketIntelligence.initialize({
-                openSeaApiKey:
-                    runtime.getSetting("OPENSEA_API_KEY") ??
-                    defaultConfig.openSeaApiKey,
-                reservoirApiKey:
-                    runtime.getSetting("RESERVOIR_API_KEY") ??
-                    defaultConfig.reservoirApiKey,
-            });
-
-            await this.socialAnalytics.initialize({
-                twitterApiKey:
-                    runtime.getSetting("TWITTER_API_KEY") ??
-                    defaultConfig.twitterApiKey,
-            });
+            const token = response[0];
+            if (token?.token.lastSale) {
+                return Number(token.token.lastSale.price);
+            }
+            return undefined;
         } catch (error) {
-            const errorMessage =
-                error instanceof Error
-                    ? error.message
-                    : "Unknown error occurred";
-            console.error(
-                "Failed to initialize NFT Collections Plugin:",
-                errorMessage
-            );
             throw error;
         }
     }
 
-    async cleanup(): Promise<void> {
-        if (this.marketIntelligence) {
-            // Cleanup market intelligence service
-        }
-        if (this.socialAnalytics) {
-            // Cleanup social analytics service
-        }
-    }
-
-    public async createPlugin(runtime: IAgentRuntime): Promise<Plugin> {
-        // Validate environment variables
+    async getOrders(params: {
+        collection: string;
+        side: "buy" | "sell";
+    }): Promise<OrderData[]> {
         try {
-            validateEnvironmentVariables({
-                TWITTER_API_KEY: process.env.TWITTER_API_KEY,
-                OPENSEA_API_KEY: process.env.OPENSEA_API_KEY,
-                RESERVOIR_API_KEY: process.env.RESERVOIR_API_KEY,
-            });
+            if (params.side === "sell") {
+                const response = await this.market.getAsks(
+                    {
+                        collection: params.collection,
+                    },
+                    this.runtime
+                );
+                return response.asks;
+            } else {
+                const response = await this.market.getBids(
+                    {
+                        collection: params.collection,
+                    },
+                    this.runtime
+                );
+                return response.bids;
+            }
         } catch (error) {
-            const errorMessage =
-                error instanceof Error
-                    ? error.message
-                    : "Unknown error occurred";
-            console.error(
-                "Environment Variable Validation Error:",
-                errorMessage
-            );
-            throw new Error(`Validation failed: ${errorMessage}`);
+            throw error;
         }
-
-        // Initialize reusable CacheManager and RateLimiter
-        const defaultCacheManager = new MemoryCacheManager({
-            ttl: defaultConfig.caching?.ttl ?? 3600,
-            maxSize: defaultConfig.caching?.maxSize ?? 1000,
-        });
-
-        const defaultRateLimiter = new RateLimiter({
-            maxRequests: defaultConfig.security?.rateLimit?.maxRequests ?? 100,
-            windowMs: defaultConfig.security?.rateLimit?.windowMs ?? 60000,
-        });
-
-        // Determine if services should be enabled based on config
-        const cacheManager =
-            (defaultConfig.caching?.enabled ?? true)
-                ? defaultCacheManager
-                : undefined;
-        const rateLimiter =
-            (defaultConfig.security?.rateLimit?.enabled ?? true)
-                ? defaultRateLimiter
-                : undefined;
-
-        // Initialize services with proper config handling
-        const reservoirConfig = {
-            apiKey: defaultConfig.reservoirApiKey,
-            ...(cacheManager && { cacheManager }),
-            ...(rateLimiter && { rateLimiter }),
-            maxConcurrent: defaultConfig.maxConcurrent ?? 5,
-            maxRetries: defaultConfig.maxRetries ?? 3,
-            batchSize: defaultConfig.batchSize ?? 20,
-            baseUrl: "https://api.reservoir.tools",
-            timeout: 30000,
-            retryStrategy: {
-                maxRetries: 3,
-                baseDelay: 1000,
-                jitter: true,
-            },
-            cacheConfig: {
-                enabled: true,
-                defaultTTL: 300,
-            },
-            telemetry: {
-                enabled: true,
-                serviceName: "ikigai-nft-reservoir",
-            },
-        };
-
-        const reservoirService = new ExtendedReservoirService(reservoirConfig);
-        reservoirService.setRuntime(runtime);
-
-        const marketIntelligenceService = new MarketIntelligenceService({
-            cacheManager,
-            rateLimiter,
-            openSeaApiKey: defaultConfig.openSeaApiKey,
-            reservoirApiKey: defaultConfig.reservoirApiKey,
-        });
-
-        const socialAnalyticsService = new SocialAnalyticsService({
-            cacheManager,
-            rateLimiter,
-            twitterApiKey: defaultConfig.twitterApiKey,
-        });
-
-        const nftCollectionProvider = createNftCollectionProvider(
-            reservoirService,
-            marketIntelligenceService,
-            socialAnalyticsService
-        );
-
-        return {
-            name: "nft-collections",
-            description:
-                "Provides NFT collection information and market intelligence",
-            providers: [nftCollectionProvider],
-            actions: [
-                getCollectionsAction(nftCollectionProvider),
-                getThinFloorNFTsAction(nftCollectionProvider, reservoirService),
-                manageWatchlistAction(reservoirService),
-                listNFTAction(reservoirService),
-                sweepFloorArbitrageAction(
-                    nftCollectionProvider,
-                    reservoirService
-                ),
-            ],
-            evaluators: [],
-        };
     }
 }
 
-export default NFTCollectionsPlugin;
+export const initialize = (
+    runtime: IAgentRuntime,
+    config: NFTCollectionsConfig
+) => {
+    // Initialize services
+    const reservoirService = new ExtendedReservoirService(
+        {
+            apiKey: config.reservoirApiKey,
+            maxConcurrent: config.maxConcurrent,
+            maxRetries: config.maxRetries,
+            timeout: 30000,
+        },
+        runtime
+    );
+
+    const marketIntelligenceService = new MarketIntelligenceService({
+        cacheManager: config.cacheManager,
+        rateLimiter: config.rateLimiter,
+        openSeaApiKey: config.openSeaApiKey,
+        reservoirApiKey: config.reservoirApiKey,
+    });
+
+    const socialAnalyticsService = new SocialAnalyticsService({
+        cacheManager: config.cacheManager,
+        rateLimiter: config.rateLimiter,
+        twitterApiKey: config.twitterApiKey,
+    });
+
+    // Create provider
+    const nftCollectionProvider = createNftCollectionProvider(
+        reservoirService,
+        marketIntelligenceService,
+        socialAnalyticsService
+    );
+
+    const plugin = {
+        name: "nft-collections",
+        version: "1.0.0",
+        description: "NFT collections plugin for market analysis and trading",
+        validateEnvironmentVariables: (
+            env: Record<string, string | undefined>
+        ) => validateEnvironmentVariables(env),
+        actions: [
+            listNFTAction(reservoirService),
+            sweepFloorArbitrageAction(reservoirService, reservoirService),
+            acceptNFTOfferAction(nftCollectionProvider, reservoirService),
+        ],
+        provider: nftCollectionProvider,
+        services: {
+            reservoirService,
+            marketIntelligenceService,
+            socialAnalyticsService,
+        },
+    };
+
+    return plugin;
+};
+
+export { ExtendedReservoirService };
+export type { NFTCollectionsConfig, NFT, FloorListing, Listing };

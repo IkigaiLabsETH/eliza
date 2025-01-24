@@ -42,8 +42,8 @@ interface ArbitrageOpportunity {
 }
 
 export const sweepFloorArbitrageAction = (
-    nftService: ReservoirService,
-    reservoirService: any
+    reservoirService: ReservoirService,
+    nftService: ReservoirService
 ): Action => {
     // Mock watchlist for demonstration
     const mockWatchlist: WatchlistEntry[] = [
@@ -55,9 +55,9 @@ export const sweepFloorArbitrageAction = (
         },
     ];
 
-    const detectThinFloorOpportunities = async (): Promise<
-        ArbitrageOpportunity[]
-    > => {
+    const detectThinFloorOpportunities = async (
+        runtime: IAgentRuntime
+    ): Promise<ArbitrageOpportunity[]> => {
         const watchlistCollections = mockWatchlist.filter(
             (collection) => collection.category === "Art"
         );
@@ -66,32 +66,48 @@ export const sweepFloorArbitrageAction = (
 
         for (const collection of watchlistCollections) {
             try {
-                const listings = await reservoirService.getListings({
-                    collection: collection.address,
-                    sortBy: "price_asc",
-                    limit: 10,
-                    includeTokenDetails: true,
-                });
+                const listings = await reservoirService.market.getOrdersAsks(
+                    {
+                        collection: collection.address,
+                        sortBy: "price",
+                        sortDirection: "asc",
+                        limit: 10,
+                    },
+                    runtime
+                );
 
-                if (listings.length >= 2) {
-                    const [lowestListing, secondLowestListing] = listings;
-                    const priceDifference =
-                        secondLowestListing.price - lowestListing.price;
-                    const thinnessPercentage =
-                        (priceDifference / lowestListing.price) * 100;
+                if (listings.asks.length >= 2) {
+                    const lowestListing = listings.asks[0];
+                    const secondLowestListing = listings.asks[1];
 
-                    // Use collection's custom thinness threshold or default to 50%
-                    const thinnessThreshold =
-                        collection.maxThinnessThreshold || 50;
+                    if (lowestListing && secondLowestListing) {
+                        const priceDifference =
+                            secondLowestListing.price.amount.native -
+                            lowestListing.price.amount.native;
+                        const thinnessPercentage =
+                            (priceDifference /
+                                lowestListing.price.amount.native) *
+                            100;
 
-                    if (thinnessPercentage > thinnessThreshold) {
-                        opportunities.push({
-                            collection: collection.address,
-                            lowestPrice: lowestListing.price,
-                            secondLowestPrice: secondLowestListing.price,
-                            thinnessPercentage,
-                            tokenIds: [lowestListing.tokenId],
-                        });
+                        // Use collection's custom thinness threshold or default to 50%
+                        const thinnessThreshold =
+                            collection.maxThinnessThreshold || 50;
+
+                        if (thinnessPercentage > thinnessThreshold) {
+                            const tokenId =
+                                lowestListing.criteria?.data.token?.tokenId;
+                            if (tokenId) {
+                                opportunities.push({
+                                    collection: collection.address,
+                                    lowestPrice:
+                                        lowestListing.price.amount.native,
+                                    secondLowestPrice:
+                                        secondLowestListing.price.amount.native,
+                                    thinnessPercentage,
+                                    tokenIds: [tokenId],
+                                });
+                            }
+                        }
                     }
                 }
             } catch (error) {
@@ -126,13 +142,18 @@ export const sweepFloorArbitrageAction = (
         handler: async (
             runtime: IAgentRuntime,
             message: Memory,
-            state: State,
+            state: State | undefined,
             options: any,
             callback: HandlerCallback
-        ) => {
+        ): Promise<boolean> => {
+            if (!callback) {
+                throw new Error("Callback is required");
+            }
+
             try {
                 // Detect thin floor opportunities
-                const opportunities = await detectThinFloorOpportunities();
+                const opportunities =
+                    await detectThinFloorOpportunities(runtime);
 
                 if (opportunities.length === 0) {
                     callback({
@@ -146,22 +167,23 @@ export const sweepFloorArbitrageAction = (
                 // Process top 3 opportunities
                 for (const opportunity of opportunities.slice(0, 3)) {
                     // Buy floor NFT
-                    const buyResult: BuyResult = await nftService.executeBuy({
-                        listings: [
-                            {
-                                tokenId: opportunity.tokenIds[0],
-                                price: opportunity.lowestPrice,
-                                seller: "marketplace",
-                                marketplace: "ikigailabs",
-                            },
-                        ],
-                        taker: message.userId,
-                    });
+                    const buyResult: BuyResult =
+                        await nftService.market.executeBuy({
+                            listings: [
+                                {
+                                    tokenId: opportunity.tokenIds[0],
+                                    price: opportunity.lowestPrice,
+                                    seller: "marketplace",
+                                    marketplace: "ikigailabs",
+                                },
+                            ],
+                            taker: message.userId,
+                        });
 
                     // Relist at 2x price
                     const relistPrice = opportunity.secondLowestPrice * 2;
                     const listResult: ListResult =
-                        await nftService.createListing({
+                        await nftService.market.createOrder({
                             tokenId: opportunity.tokenIds[0],
                             collectionAddress: opportunity.collection,
                             price: relistPrice,
@@ -197,9 +219,13 @@ export const sweepFloorArbitrageAction = (
                 callback({ text: response });
                 return true;
             } catch (error) {
-                console.error("Arbitrage workflow failed:", error);
+                const errorMessage =
+                    error instanceof Error
+                        ? error.message
+                        : "Unknown error occurred";
+                console.error("Arbitrage workflow failed:", errorMessage);
                 callback({
-                    text: `Arbitrage workflow failed: ${error.message}`,
+                    text: `Arbitrage workflow failed: ${errorMessage}`,
                 });
                 return false;
             }

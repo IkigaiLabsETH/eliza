@@ -39,14 +39,15 @@ export class TransferService extends BaseReservoirService {
 
             endOperation();
             return response;
-        } catch (error) {
+        } catch (error: unknown) {
             console.error("Error fetching bulk transfers:", error);
             this.performanceMonitor.recordMetric({
                 operation: "getBulkTransfers",
                 duration: 0,
                 success: false,
                 metadata: {
-                    error: error.message,
+                    error:
+                        error instanceof Error ? error.message : String(error),
                     params,
                 },
             });

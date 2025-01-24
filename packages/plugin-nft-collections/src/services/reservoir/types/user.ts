@@ -1,4 +1,11 @@
-import { Price, Source, Continuation } from "./common";
+import {
+    Collection,
+    Price,
+    Source,
+    ContinuationParams,
+    SortParams,
+    ActivityType,
+} from "./common";
 import {
     TokenBase,
     TokenCollection,
@@ -6,21 +13,99 @@ import {
     TokenAttribute,
 } from "./token";
 
-export interface UserTokensParams {
+export interface UserToken {
+    token: {
+        contract: string;
+        tokenId: string;
+        name?: string;
+        description?: string;
+        image?: string;
+        media?: string;
+        kind?: string;
+        isFlagged?: boolean;
+        lastFlagUpdate?: string;
+        rarity?: number;
+        rarityRank?: number;
+        collection?: Collection;
+    };
+    ownership: {
+        tokenCount: number;
+        onSaleCount: number;
+        floorAsk?: {
+            id: string;
+            price: number;
+            maker: string;
+            validFrom: number;
+            validUntil: number;
+        };
+        acquiredAt?: string;
+    };
+}
+
+export interface UserCollection {
+    collection: Collection;
+    ownership: {
+        tokenCount: number;
+        onSaleCount: number;
+        floorAsk?: {
+            id: string;
+            price: number;
+            maker: string;
+            validFrom: number;
+            validUntil: number;
+        };
+        acquiredAt?: string;
+    };
+}
+
+export interface UserTokensParams extends ContinuationParams, SortParams {
     user: string;
     collection?: string;
-    community?: string;
-    limit?: number;
-    continuation?: string;
     includeTopBid?: boolean;
+    includeDynamicPricing?: boolean;
     includeAttributes?: boolean;
     includeLastSale?: boolean;
     includeRawData?: boolean;
-    sortBy?: "acquiredAt" | "lastAppraisalValue" | "tokenId";
-    sortDirection?: "asc" | "desc";
 }
 
-export interface UserTokensData extends Continuation {
+export interface UserCollectionsParams extends ContinuationParams, SortParams {
+    user: string;
+    includeTopBid?: boolean;
+    includeDynamicPricing?: boolean;
+    includeAttributes?: boolean;
+}
+
+export interface UserActivityParams extends ContinuationParams, SortParams {
+    users: string[];
+    collection?: string;
+    types?: ActivityType[];
+    includeMetadata?: boolean;
+}
+
+export interface UserActivityData {
+    id: string;
+    type: ActivityType;
+    fromAddress: string;
+    toAddress?: string;
+    price?: Price;
+    amount?: number;
+    timestamp: number;
+    token: {
+        contract: string;
+        tokenId: string;
+        name?: string;
+        image?: string;
+        collection: Collection;
+    };
+    order?: {
+        id: string;
+        side: "ask" | "bid";
+        source?: Source;
+    };
+    metadata?: Record<string, any>;
+}
+
+export interface UserTokensData extends ContinuationParams {
     tokens: Array<{
         token: TokenBase & {
             collection?: TokenCollection;
@@ -61,7 +146,7 @@ export interface UserAsksParams {
     sortDirection?: "asc" | "desc";
 }
 
-export interface UserAsksData extends Continuation {
+export interface UserAsksData extends ContinuationParams {
     asks: Array<{
         id: string;
         kind: string;
@@ -129,7 +214,7 @@ export interface UserBidsParams {
     sortDirection?: "asc" | "desc";
 }
 
-export interface UserBidsData extends Continuation {
+export interface UserBidsData extends ContinuationParams {
     bids: Array<{
         id: string;
         kind: string;

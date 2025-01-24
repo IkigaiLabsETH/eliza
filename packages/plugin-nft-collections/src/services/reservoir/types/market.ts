@@ -1,172 +1,129 @@
-import { Price, Source, Continuation } from "./common";
-import { TokenCollection } from "./token";
+import {
+    Collection,
+    Price,
+    Source,
+    ContinuationParams,
+    SortParams,
+} from "./common";
 
 export interface MarketStats {
     totalVolume: number;
     totalSales: number;
     totalListings: number;
-    averagePrice: number;
     floorPrice: number;
-    volumeChange: {
-        "1h": number;
-        "24h": number;
-        "7d": number;
-        "30d": number;
-    };
+    averagePrice: number;
+    volumeChange24h: number;
+    volumeChange7d: number;
+    volumeChange30d: number;
 }
 
-export interface TopTraderStats {
-    purchases: {
-        count: number;
-        volume: number;
-    };
-    sales: {
-        count: number;
-        volume: number;
-    };
-    profit: number;
-    totalVolume: number;
-    rank?: number;
-}
-
-export interface TopTradersParams {
-    collection: string;
-    period?: "1h" | "6h" | "24h" | "7d" | "30d";
-    sortBy?: "purchases" | "sales" | "profit" | "volume";
-    limit?: number;
-    offset?: number;
+export interface TopTradersParams extends ContinuationParams, SortParams {
+    collection?: string;
     includeMetadata?: boolean;
-    excludeZeroVolume?: boolean;
+    timeframe?: "1h" | "6h" | "24h" | "7d" | "30d";
 }
 
 export interface TopTraderData {
-    user: {
-        address: string;
-        name?: string;
-        avatar?: string;
-    };
-    stats: TopTraderStats;
-    period: string;
+    address: string;
+    totalVolume: number;
+    totalSales: number;
+    totalBuys: number;
+    totalSells: number;
+    profit: number;
+    profitUsd: number;
+    rank: number;
 }
 
-export interface CollectionBidsParams {
+export interface FloorListingParams extends ContinuationParams {
     collection: string;
-    sortBy?: "price" | "createdAt";
-    sortDirection?: "asc" | "desc";
+    tokens?: string[];
     normalizeRoyalties?: boolean;
     includeCriteriaMetadata?: boolean;
     includeRawData?: boolean;
     includeDynamicPricing?: boolean;
-    startTimestamp?: number;
-    endTimestamp?: number;
     currencies?: string[];
-    limit?: number;
-    offset?: number;
 }
 
-export interface CollectionBidData {
+export interface FloorListing {
     id: string;
     price: Price;
     maker: string;
     validFrom: number;
     validUntil: number;
-    source: Source;
+    source?: Source;
     criteria?: {
         kind: string;
         data: {
-            token: {
+            token?: {
                 tokenId: string;
                 name?: string;
                 image?: string;
             };
-            collection: TokenCollection & {
-                royalties?: {
-                    bps: number;
-                    recipient: string;
-                };
-            };
-            attributes?: Array<{
-                key: string;
-                value: string;
-            }>;
+            collection?: Collection;
         };
-    };
-    dynamicPricing?: {
-        kind: string;
-        data: Record<string, any>;
-    };
-}
-
-export interface FloorListingParams {
-    collection: string;
-    limit: number;
-    sortBy: "price" | "rarity";
-    currencies?: string[];
-    maxPrice?: number;
-    minPrice?: number;
-}
-
-export interface FloorListing {
-    tokenId: string;
-    price: number;
-    priceUsd?: number;
-    seller: string;
-    marketplace: string;
-    validFrom: string;
-    validUntil: string;
-    source?: Source;
-    token?: {
-        rarity?: number;
-        rarityRank?: number;
-        attributes?: Record<string, string>;
-        image?: string;
-        name?: string;
     };
 }
 
 export interface BuyOptions {
-    listings: Array<{
-        tokenId: string;
-        price: number;
-        seller: string;
-        marketplace: string;
-    }>;
-    taker: string;
+    tokens: string[];
+    quantity?: number;
+    referrer?: string;
+    onlyPath?: boolean;
+    skipBalanceCheck?: boolean;
+    partial?: boolean;
+    currency?: string;
+    normalizeRoyalties?: boolean;
 }
 
 export interface BuyResponse {
-    path: string;
-    steps: Array<{
-        action: string;
-        status: string;
+    path: Array<{
+        orderId: string;
+        contract: string;
+        tokenId: string;
+        quantity: number;
+        source: Source;
+        currency: {
+            contract: string;
+            name: string;
+            symbol: string;
+            decimals: number;
+        };
+        quote: {
+            gross: {
+                amount: string;
+                nativeAmount: string;
+                usdAmount: string;
+            };
+            net: {
+                amount: string;
+                nativeAmount: string;
+                usdAmount: string;
+            };
+            fees: Array<{
+                amount: string;
+                nativeAmount: string;
+                usdAmount: string;
+                recipient: string;
+                bps: number;
+            }>;
+        };
     }>;
+    price: Price;
+    message?: string;
 }
 
-/**
- * Parameters for fetching asks (listings)
- * @see https://docs.reservoir.tools/reference/getordersasksv5
- */
-export interface OrdersAsksParams {
+export interface OrdersAsksParams extends ContinuationParams, SortParams {
     token?: string;
-    tokenSetId?: string;
-    maker?: string;
-    community?: string;
     collection?: string;
+    maker?: string;
     status?: "active" | "inactive" | "expired" | "cancelled" | "filled";
-    sortBy?: "price" | "createdAt";
-    sortDirection?: "asc" | "desc";
-    continuation?: string;
-    limit?: number;
-    includeMetadata?: boolean;
+    normalizeRoyalties?: boolean;
+    includeCriteriaMetadata?: boolean;
     includeRawData?: boolean;
     includeDynamicPricing?: boolean;
-    normalizeRoyalties?: boolean;
     currencies?: string[];
 }
 
-/**
- * Response data for an ask (listing)
- */
 export interface OrderAskData {
     id: string;
     kind: string;
@@ -177,14 +134,7 @@ export interface OrderAskData {
     contract: string;
     maker: string;
     taker?: string;
-    price: Price & {
-        netAmount: {
-            raw: string;
-            decimal: number;
-            usd: number;
-            native: number;
-        };
-    };
+    price: Price;
     validFrom: number;
     validUntil: number;
     quantityFilled: number;
@@ -197,12 +147,7 @@ export interface OrderAskData {
                 name?: string;
                 image?: string;
             };
-            collection?: TokenCollection & {
-                royalties?: Array<{
-                    bps: number;
-                    recipient: string;
-                }>;
-            };
+            collection?: Collection;
         };
     };
     source?: Source;
@@ -219,33 +164,18 @@ export interface OrderAskData {
     rawData?: Record<string, any>;
 }
 
-/**
- * Parameters for fetching bids (offers)
- * @see https://docs.reservoir.tools/reference/getordersbidsv6
- */
-export interface OrdersBidsParams {
+export interface OrdersBidsParams extends ContinuationParams, SortParams {
     token?: string;
-    tokenSetId?: string;
-    maker?: string;
-    community?: string;
     collection?: string;
-    attributes?: Record<string, string>;
+    maker?: string;
     status?: "active" | "inactive" | "expired" | "cancelled" | "filled";
-    sortBy?: "price" | "createdAt" | "updatedAt";
-    sortDirection?: "asc" | "desc";
-    continuation?: string;
-    limit?: number;
-    includeMetadata?: boolean;
+    normalizeRoyalties?: boolean;
+    includeCriteriaMetadata?: boolean;
     includeRawData?: boolean;
     includeDynamicPricing?: boolean;
-    normalizeRoyalties?: boolean;
     currencies?: string[];
-    excludeEOA?: boolean;
 }
 
-/**
- * Response data for a bid (offer)
- */
 export interface OrderBidData {
     id: string;
     kind: string;
@@ -256,14 +186,7 @@ export interface OrderBidData {
     contract: string;
     maker: string;
     taker?: string;
-    price: Price & {
-        netAmount: {
-            raw: string;
-            decimal: number;
-            usd: number;
-            native: number;
-        };
-    };
+    price: Price;
     validFrom: number;
     validUntil: number;
     quantityFilled: number;
@@ -276,12 +199,7 @@ export interface OrderBidData {
                 name?: string;
                 image?: string;
             };
-            collection?: TokenCollection & {
-                royalties?: Array<{
-                    bps: number;
-                    recipient: string;
-                }>;
-            };
+            collection?: Collection;
         };
     };
     source?: Source;
@@ -298,22 +216,14 @@ export interface OrderBidData {
     rawData?: Record<string, any>;
 }
 
-/**
- * Parameters for fetching orders depth
- * @see https://docs.reservoir.tools/reference/getordersdepthv1
- */
 export interface OrdersDepthParams {
-    collection?: string;
-    token?: string;
+    collection: string;
     side: "buy" | "sell";
-    includeMetadata?: boolean;
     normalizeRoyalties?: boolean;
-    currencies?: string[];
+    excludeEOA?: boolean;
+    excludeSpam?: boolean;
 }
 
-/**
- * Response data for orders depth
- */
 export interface OrdersDepthData {
     price: Price;
     quantity: number;
