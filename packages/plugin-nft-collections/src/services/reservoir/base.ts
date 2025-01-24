@@ -1,15 +1,14 @@
-import { PerformanceMonitor } from "../../utils/performance";
-import {
-    ErrorHandler,
-    NFTErrorFactory,
-    ErrorType,
-    ErrorCode,
-    NFTError,
-} from "../../utils/error-handler";
 import { MemoryCacheManager } from "../cache-manager";
 import { RateLimiter } from "../rate-limiter";
+import { PerformanceMonitor } from "../../utils/performance";
+import { ErrorHandler } from "../../utils/error-handler";
 import { IAgentRuntime } from "@elizaos/core";
 import { z } from "zod";
+import {
+    ReservoirError,
+    ReservoirAuthenticationError,
+    ReservoirRateLimitError,
+} from "./errors";
 
 // Enhanced error codes specific to Reservoir service
 export enum ReservoirErrorCode {
@@ -17,7 +16,20 @@ export enum ReservoirErrorCode {
     API_KEY_INVALID = "RESERVOIR_API_KEY_INVALID",
     INSUFFICIENT_FUNDS = "RESERVOIR_INSUFFICIENT_FUNDS",
     COLLECTION_NOT_FOUND = "RESERVOIR_COLLECTION_NOT_FOUND",
+    RateLimitExceeded = "RESERVOIR_RATE_LIMIT_EXCEEDED",
+    InvalidApiKey = "RESERVOIR_API_KEY_INVALID",
+    ServiceUnavailable = "RESERVOIR_SERVICE_UNAVAILABLE",
+    HttpError = "RESERVOIR_HTTP_ERROR",
+    UnknownError = "RESERVOIR_UNKNOWN_ERROR",
 }
+
+// Validation schema for configuration
+export const ReservoirConfigSchema = z.object({
+    apiKey: z.string().optional(),
+    baseUrl: z.string().url().optional().default("https://api.reservoir.tools"),
+    timeout: z.number().positive().optional().default(30000),
+    maxRetries: z.number().min(0).optional().default(3),
+});
 
 // Comprehensive configuration interface
 export interface ReservoirServiceConfig {
@@ -44,54 +56,78 @@ export interface ReservoirServiceConfig {
     };
 }
 
-// Validation schema for configuration
-const ReservoirConfigSchema = z.object({
-    apiKey: z.string().optional(),
-    baseUrl: z.string().url().optional().default("https://api.reservoir.tools"),
-    timeout: z.number().positive().optional().default(10000),
-    maxRetries: z.number().min(0).optional().default(3),
-});
+// Update ReservoirError constructor interface
+export interface ReservoirErrorOptions {
+    message: string;
+    code: ReservoirErrorCode;
+    details?: Record<string, any>;
+    retryable?: boolean;
+    severity?: string;
+    status?: number;
+}
 
 export abstract class BaseReservoirService {
-    protected cacheManager?: MemoryCacheManager;
-    protected rateLimiter?: RateLimiter;
+    protected cacheManager: MemoryCacheManager | undefined;
+    protected rateLimiter: RateLimiter | undefined;
     protected maxRetries: number;
     protected batchSize: number;
     protected performanceMonitor: PerformanceMonitor;
     protected errorHandler: ErrorHandler;
-    protected config: Required<ReservoirServiceConfig>;
+    protected config: {
+        cacheManager: MemoryCacheManager | undefined;
+        rateLimiter: RateLimiter | undefined;
+        maxConcurrent: number;
+        maxRetries: number;
+        batchSize: number;
+        apiKey: string | undefined;
+        baseUrl: string;
+        timeout: number;
+        retryStrategy: {
+            maxRetries: number;
+            baseDelay: number;
+            jitter: boolean;
+        };
+        cacheConfig: {
+            enabled: boolean;
+            defaultTTL: number;
+        };
+        telemetry: {
+            enabled: boolean;
+            serviceName: string;
+        };
+    };
 
     constructor(config: ReservoirServiceConfig = {}) {
         // Validate and merge configuration
         const validatedConfig = ReservoirConfigSchema.parse(config);
 
+        // Initialize with default values
         this.config = {
-            cacheManager: config.cacheManager,
-            rateLimiter: config.rateLimiter,
-            maxConcurrent: config.maxConcurrent || 5,
+            cacheManager: config.cacheManager ?? undefined,
+            rateLimiter: config.rateLimiter ?? undefined,
+            maxConcurrent: config.maxConcurrent ?? 5,
             maxRetries: validatedConfig.maxRetries,
-            batchSize: config.batchSize || 20,
-            apiKey: validatedConfig.apiKey || process.env.RESERVOIR_API_KEY,
-            baseUrl: validatedConfig.baseUrl,
-            timeout: validatedConfig.timeout,
+            batchSize: config.batchSize ?? 20,
+            apiKey: validatedConfig.apiKey ?? process.env.RESERVOIR_API_KEY,
+            baseUrl: validatedConfig.baseUrl ?? "https://api.reservoir.tools",
+            timeout: validatedConfig.timeout ?? 30000,
             retryStrategy: {
-                maxRetries: 3,
-                baseDelay: 1000,
-                jitter: true,
-                ...config.retryStrategy,
+                maxRetries: config.retryStrategy?.maxRetries ?? 3,
+                baseDelay: config.retryStrategy?.baseDelay ?? 1000,
+                jitter: config.retryStrategy?.jitter ?? true,
             },
             cacheConfig: {
-                enabled: true,
-                defaultTTL: 300,
-                ...config.cacheConfig,
+                enabled: config.cacheConfig?.enabled ?? true,
+                defaultTTL: config.cacheConfig?.defaultTTL ?? 300,
             },
             telemetry: {
-                enabled: true,
-                serviceName: "ikigai-nft-reservoir",
-                ...config.telemetry,
+                enabled: config.telemetry?.enabled ?? true,
+                serviceName:
+                    config.telemetry?.serviceName ?? "ikigai-nft-reservoir",
             },
         };
 
+        // Initialize components
         this.cacheManager = this.config.cacheManager;
         this.rateLimiter = this.config.rateLimiter;
         this.maxRetries = this.config.maxRetries;
@@ -99,8 +135,10 @@ export abstract class BaseReservoirService {
         this.performanceMonitor = PerformanceMonitor.getInstance();
         this.errorHandler = ErrorHandler.getInstance();
 
-        // Setup telemetry and monitoring
-        this.setupTelemetry();
+        // Set up telemetry and monitoring
+        if (this.config.telemetry.enabled) {
+            this.setupTelemetry();
+        }
     }
 
     // Advanced caching with context-aware invalidation
@@ -113,17 +151,18 @@ export abstract class BaseReservoirService {
             context?: string;
         }
     ): Promise<T> {
-        if (!this.config.cacheConfig.enabled) {
+        if (!this.config.cacheConfig.enabled || !this.cacheManager) {
             return this.makeRequest<T>(endpoint, params, 0, runtime);
         }
 
         const cacheKey = this.generateCacheKey(endpoint, params);
+        const cachedResponse = await this.cacheManager.get<T>(cacheKey);
 
-        const cachedResponse = await this.cacheManager?.get<T>(cacheKey);
-        if (cachedResponse) {
-            if (this.isCacheFresh(cachedResponse, cacheOptions?.ttl)) {
-                return cachedResponse;
-            }
+        if (
+            cachedResponse &&
+            this.isCacheFresh(cachedResponse, cacheOptions?.ttl)
+        ) {
+            return cachedResponse;
         }
 
         const freshData = await this.makeRequest<T>(
@@ -132,8 +171,7 @@ export abstract class BaseReservoirService {
             0,
             runtime
         );
-
-        await this.cacheManager?.set(
+        await this.cacheManager.set(
             cacheKey,
             freshData,
             cacheOptions?.ttl ?? this.config.cacheConfig.defaultTTL
@@ -161,44 +199,25 @@ export abstract class BaseReservoirService {
     }
 
     // Enhanced error handling method
-    protected handleReservoirError(
-        error: Error,
-        context: Record<string, any>
-    ): NFTError {
-        if (error.message.includes("rate limit")) {
-            return NFTErrorFactory.create(
-                ErrorType.RATE_LIMIT,
-                ErrorCode.RATE_LIMIT_EXCEEDED,
-                "Reservoir API rate limit exceeded",
-                {
-                    details: {
-                        ...context,
-                        retryAfter: this.extractRetryAfter(error),
-                    },
-                    retryable: true,
-                    severity: "HIGH",
-                }
+    protected handleReservoirError(error: unknown): ReservoirError {
+        const errorMessage =
+            error instanceof Error ? error.message : String(error);
+
+        if (errorMessage.includes("rate limit")) {
+            return new ReservoirRateLimitError(this.extractRetryAfter());
+        }
+
+        if (errorMessage.includes("API key")) {
+            return new ReservoirAuthenticationError(
+                "Invalid Reservoir API key"
             );
         }
 
-        if (error.message.includes("API key")) {
-            return NFTErrorFactory.create(
-                ErrorType.AUTHENTICATION,
-                ErrorCode.API_KEY_INVALID,
-                "Invalid Reservoir API key",
-                {
-                    details: context,
-                    retryable: false,
-                    severity: "CRITICAL",
-                }
-            );
-        }
-
-        return NFTErrorFactory.fromError(error);
+        return new ReservoirError(errorMessage);
     }
 
     // Extract retry-after timestamp
-    private extractRetryAfter(error: Error): number {
+    private extractRetryAfter(): number {
         return Date.now() + 60000; // Default 1 minute
     }
 
@@ -211,11 +230,11 @@ export abstract class BaseReservoirService {
             jitter?: boolean;
         } = {}
     ): Promise<T> {
-        const {
-            maxRetries = this.config.retryStrategy.maxRetries,
-            baseDelay = this.config.retryStrategy.baseDelay,
-            jitter = this.config.retryStrategy.jitter,
-        } = options;
+        const maxRetries =
+            options.maxRetries ?? this.config.retryStrategy.maxRetries;
+        const baseDelay =
+            options.baseDelay ?? this.config.retryStrategy.baseDelay;
+        const jitter = options.jitter ?? this.config.retryStrategy.jitter;
 
         let lastError: Error | null = null;
 
@@ -223,7 +242,9 @@ export abstract class BaseReservoirService {
             try {
                 return await requestFn();
             } catch (error) {
-                lastError = error;
+                const errorInstance =
+                    error instanceof Error ? error : new Error(String(error));
+                lastError = errorInstance;
 
                 const delay = jitter
                     ? baseDelay * Math.pow(2, attempt) * (1 + Math.random())
@@ -235,11 +256,11 @@ export abstract class BaseReservoirService {
                     success: false,
                     metadata: {
                         attempt,
-                        error: error.message,
+                        error: errorInstance.message,
                     },
                 });
 
-                if (this.isCircuitBreakerTripped(error)) {
+                if (this.isCircuitBreakerTripped(errorInstance)) {
                     break;
                 }
 
@@ -247,13 +268,18 @@ export abstract class BaseReservoirService {
             }
         }
 
-        throw lastError || new Error("Max retries exceeded");
+        throw lastError ?? new Error("Max retries exceeded");
     }
 
     // Circuit breaker logic
-    private isCircuitBreakerTripped(error: Error): boolean {
-        const criticalErrors = ["API_KEY_INVALID", "UNAUTHORIZED", "FORBIDDEN"];
-        return criticalErrors.some((code) => error.message.includes(code));
+    protected isCircuitBreakerTripped(error: Error): boolean {
+        if (error instanceof ReservoirAuthenticationError) {
+            return true;
+        }
+        if (error instanceof ReservoirRateLimitError) {
+            return true;
+        }
+        return false;
     }
 
     /**
@@ -261,7 +287,7 @@ export abstract class BaseReservoirService {
      */
     protected setupTelemetry(): void {
         if (this.config.telemetry?.enabled) {
-            this.performanceMonitor.on("alert", (alert) => {
+            this.performanceMonitor.on("alert", (alert: any) => {
                 console.log(
                     `Reservoir Service Alert: ${JSON.stringify(alert)}`
                 );
@@ -290,46 +316,106 @@ export abstract class BaseReservoirService {
                 runtime.getSetting("RESERVOIR_API_KEY") || this.config.apiKey;
 
             const result = await this.retryRequest(async () => {
+                const headers = new Headers();
+                headers.set("Content-Type", "application/json");
+                if (reservoirApiKey) {
+                    headers.set("x-api-key", reservoirApiKey);
+                }
+
                 const response = await fetch(
-                    `${this.config.baseUrl}${endpoint}?${new URLSearchParams(params).toString()}`,
+                    `${this.config.baseUrl}${endpoint}?${new URLSearchParams(
+                        this.sanitizeParams(params)
+                    ).toString()}`,
                     {
-                        headers: {
-                            "x-api-key": reservoirApiKey,
-                            "Content-Type": "application/json",
-                        },
+                        headers,
                         signal: AbortSignal.timeout(this.config.timeout),
                     }
                 );
 
                 if (!response.ok) {
-                    throw new Error(
-                        `Reservoir API error: ${response.status} ${await response.text()}`
+                    if (response.status === 401) {
+                        throw new ReservoirAuthenticationError(
+                            "Invalid Reservoir API key"
+                        );
+                    }
+                    if (response.status === 429) {
+                        const retryAfter = parseInt(
+                            response.headers.get("retry-after") || "0"
+                        );
+                        throw new ReservoirRateLimitError(retryAfter);
+                    }
+
+                    throw new ReservoirError(
+                        `HTTP error! status: ${response.status}`
                     );
                 }
 
-                return response.json();
+                const responseData = await response.json();
+                if (!this.validateResponseData<T>(responseData)) {
+                    throw new ReservoirError("Invalid response data format");
+                }
+                return responseData;
             });
 
             endOperation();
             return result;
         } catch (error) {
+            const errorInstance =
+                error instanceof Error ? error : new Error(String(error));
+
             this.performanceMonitor.recordMetric({
                 operation: "makeRequest",
                 duration: 0,
                 success: false,
                 metadata: {
-                    error: error.message,
+                    error: errorInstance.message,
                     endpoint,
                     params,
                 },
             });
 
-            const nftError = this.handleReservoirError(error, {
-                endpoint,
-                params,
-            });
+            const nftError = this.handleReservoirError(errorInstance);
             this.errorHandler.handleError(nftError);
+            throw nftError;
+        }
+    }
+
+    // Validate response data matches expected type
+    private validateResponseData<T>(data: unknown): data is T {
+        if (!data || typeof data !== "object") {
+            return false;
+        }
+        // Add additional type validation if needed
+        return true;
+    }
+
+    // Sanitize parameters for URL
+    private sanitizeParams(
+        params: Record<string, any>
+    ): Record<string, string> {
+        const sanitized: Record<string, string> = {};
+        for (const [key, value] of Object.entries(params)) {
+            if (value !== undefined && value !== null) {
+                sanitized[key] = String(value);
+            }
+        }
+        return sanitized;
+    }
+
+    protected async handleError(error: unknown): Promise<Error | null> {
+        if (error instanceof Error) {
+            return error;
+        }
+        return null;
+    }
+
+    protected async handleRequestError(error: unknown): Promise<never> {
+        if (error instanceof ReservoirError) {
             throw error;
         }
+        if (error instanceof Error) {
+            throw new ReservoirError("Unknown error occurred");
+        }
+        throw new ReservoirError("Unknown error occurred");
     }
 }
