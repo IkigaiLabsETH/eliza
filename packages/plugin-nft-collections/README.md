@@ -1765,6 +1765,218 @@ const filteredOpportunities = watchlist.getWatchlist({
 3. Monitor and adjust your strategy regularly
 4. Use multiple marketplaces for comprehensive analysis
 
+# Reservoir Service
+
+A comprehensive TypeScript client for interacting with the Reservoir Protocol API, featuring advanced caching, error handling, and performance monitoring.
+
+## Features
+
+- **Type-Safe API Client**: Fully typed interfaces for all Reservoir API endpoints
+- **Advanced Caching**: Intelligent caching with context-aware invalidation
+- **Error Handling**: Comprehensive error handling with custom error types
+- **Performance Monitoring**: Built-in performance tracking and metrics
+- **Rate Limiting**: Configurable rate limiting with exponential backoff
+- **Circuit Breaking**: Automatic circuit breaking for fault tolerance
+- **Response Enhancement**: Enriched responses with analytics and insights
+- **Validation**: Robust input validation with detailed error messages
+
+## Installation
+
+```bash
+npm install @ikigai/nft-collections
+```
+
+## Usage
+
+### Basic Setup
+
+```typescript
+import { ReservoirClient } from "@ikigai/nft-collections";
+
+const client = new ReservoirClient({
+    apiKey: "your-api-key",
+    baseUrl: "https://api.reservoir.tools", // Optional
+});
+```
+
+### Configuration Options
+
+```typescript
+interface ReservoirServiceConfig {
+    apiKey?: string;
+    baseUrl?: string;
+    timeout?: number;
+    maxRetries?: number;
+    retryStrategy?: {
+        maxRetries?: number;
+        baseDelay?: number;
+        jitter?: boolean;
+    };
+    cacheConfig?: {
+        enabled?: boolean;
+        defaultTTL?: number;
+    };
+    telemetry?: {
+        enabled?: boolean;
+        serviceName?: string;
+    };
+}
+```
+
+### Fetching Collections
+
+```typescript
+// Get collection details
+const collection = await client.getCollection("collection-id", {
+    includeTopBid: true,
+    includeDynamicPricing: true,
+});
+
+// Search collections
+const collections = await client.getCollections({
+    sortBy: "volume",
+    sortDirection: "desc",
+    limit: 20,
+});
+
+// Get trending collections
+const trending = await client.getCollectionActivity({
+    collection: "collection-id",
+    types: ["sale", "mint"],
+    includeMetadata: true,
+});
+```
+
+### Working with Tokens
+
+```typescript
+// Get token details
+const token = await client.getToken("contract", "token-id", {
+    includeAttributes: true,
+    includeTopBid: true,
+});
+
+// Get token floor price
+const floor = await client.getTokenFloor({
+    tokens: ["contract:token-id"],
+    normalizeRoyalties: true,
+});
+
+// Get token asks/bids
+const asks = await client.getTokenAsks({
+    token: "contract:token-id",
+    sortBy: "price",
+    sortDirection: "asc",
+});
+```
+
+### Order Management
+
+```typescript
+// Get orders
+const orders = await client.getOrders({
+    status: "active",
+    sortBy: "price",
+});
+
+// Get order quote
+const quote = await client.getOrderQuote({
+    token: "contract:token-id",
+    side: "buy",
+    currency: "ETH",
+});
+
+// Execute order
+const execution = await client.executeOrder({
+    id: "order-id",
+    taker: "wallet-address",
+});
+```
+
+### User Activity
+
+```typescript
+// Get user tokens
+const tokens = await client.getUserTokens({
+    user: "wallet-address",
+    includeTopBid: true,
+});
+
+// Get user collections
+const collections = await client.getUserCollections({
+    user: "wallet-address",
+    sortBy: "value",
+});
+
+// Get user activity
+const activity = await client.getUserActivity({
+    users: ["wallet-address"],
+    types: ["sale", "mint", "transfer"],
+});
+```
+
+## Error Handling
+
+The service includes comprehensive error handling with custom error types:
+
+```typescript
+try {
+    const result = await client.getCollection("collection-id");
+} catch (error) {
+    if (error instanceof ReservoirRateLimitError) {
+        // Handle rate limiting
+        console.log(`Retry after: ${error.retryAfter} seconds`);
+    } else if (error instanceof ReservoirAPIError) {
+        // Handle API errors
+        console.log(`API Error: ${error.message}`);
+        console.log(`Status: ${error.statusCode}`);
+        console.log(`Code: ${error.errorCode}`);
+    }
+}
+```
+
+## Performance Monitoring
+
+The service includes built-in performance monitoring:
+
+```typescript
+// Get performance metrics
+const metrics = client.getPerformanceMetrics();
+
+// Subscribe to performance alerts
+client.onPerformanceAlert((alert) => {
+    console.log(`Alert: ${alert.type} - ${alert.message}`);
+});
+```
+
+## Response Enhancement
+
+The service can enhance API responses with additional analytics and insights:
+
+```typescript
+// Get enhanced token data
+const enhancedToken = client.enhanceToken(tokenData);
+console.log(enhancedToken.analytics.priceHistory);
+console.log(enhancedToken.recommendations.similar);
+
+// Get enhanced collection data
+const enhancedCollection = client.enhanceCollection(collectionData);
+console.log(enhancedCollection.analytics.holderDistribution);
+console.log(enhancedCollection.insights.whaleActivity);
+```
+
+## Contributing
+
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'feat: add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+## License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
+
 ### Disclaimer
 
 Trading NFTs involves significant risk. Always conduct thorough research and never invest more than you can afford to lose.
