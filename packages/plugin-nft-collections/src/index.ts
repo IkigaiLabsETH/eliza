@@ -257,5 +257,7 @@ export const initialize = (
     return plugin;
 };
 
+export default initialize;
+
 export { ExtendedReservoirService };
 export type { NFTCollectionsConfig, NFT, FloorListing, Listing };
