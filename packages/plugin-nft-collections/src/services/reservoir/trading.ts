@@ -5,6 +5,30 @@ import { MarketService } from "./market";
 import { ReservoirError, ReservoirErrorCode } from "./errors";
 import { OrdersAsksParams, OrderAskData } from "./types/market";
 
+export interface Position {
+    tokenId: string;
+    collection: string;
+    purchasePrice: number;
+    listPrice: number;
+    purchaseTime: number;
+    gasUsed: number;
+}
+
+export interface MarketTrend {
+    volumeChange24h: number;
+    priceChange24h: number;
+    salesCount24h: number;
+    averageListingPrice: number;
+    isUptrend: boolean;
+}
+
+export interface CollectionHealth {
+    uniqueHolders: number;
+    floorPrice: number;
+    marketCap: number;
+    isHealthy: boolean;
+}
+
 export interface SweepConfig {
     minPriceGapPercent: number; // Minimum price gap % to consider an opportunity
     maxPurchasePrice: number; // Maximum price willing to pay in ETH
@@ -13,6 +37,12 @@ export interface SweepConfig {
     maxSlippageBps: number; // Maximum allowed slippage in basis points (e.g. 100 = 1%)
     minProfitAfterGas: number; // Minimum profit required after gas costs in ETH
     maxGasPrice: number; // Maximum gas price willing to pay in gwei
+    maxPositionsPerCollection: number; // Maximum number of positions to hold per collection
+    maxTotalPositions: number; // Maximum total positions across all collections
+    minMarketCap: number; // Minimum market cap in ETH
+    minUniqueHolders: number; // Minimum number of unique holders
+    minDailyVolume: number; // Minimum 24h volume in ETH
+    maxHoldingTime: number; // Maximum time to hold a position in seconds
 }
 
 export interface SweepResult {
@@ -26,6 +56,8 @@ export interface SweepResult {
     gasUsed?: number; // Gas used for the entire operation
     estimatedProfit?: number; // Estimated profit after all costs
     actualSlippage?: number; // Actual slippage experienced
+    marketTrend?: MarketTrend; // Market trend analysis
+    collectionHealth?: CollectionHealth; // Collection health metrics
 }
 
 interface GasEstimate {
@@ -37,6 +69,7 @@ interface GasEstimate {
 export class TradingService extends BaseReservoirService {
     private executeService: ExecuteService;
     private marketService: MarketService;
+    private positions: Map<string, Position[]> = new Map(); // Collection -> Positions
 
     // Typical gas costs for operations (can be adjusted based on network conditions)
     private readonly TYPICAL_BUY_GAS = 150000; // 150k gas units
@@ -50,6 +83,146 @@ export class TradingService extends BaseReservoirService {
         super(config);
         this.executeService = executeService;
         this.marketService = marketService;
+    }
+
+    private getSafePrice(ask: OrderAskData | undefined): number {
+        if (!ask?.price?.amount) return 0;
+        return Number(ask.price.amount);
+    }
+
+    private getFirstListing(
+        listings: OrderAskData[]
+    ): OrderAskData | undefined {
+        return listings.length > 0 ? listings[0] : undefined;
+    }
+
+    private async getMarketTrend(
+        collectionAddress: string,
+        runtime: IAgentRuntime
+    ): Promise<MarketTrend> {
+        const params: OrdersAsksParams = {
+            collection: collectionAddress,
+            status: "active",
+            sortBy: "price",
+        };
+        const response = await this.marketService.getAsks(params, runtime);
+        const stats = await this.marketService.getMarketStats(runtime);
+
+        // Calculate collection-specific metrics
+        const listings = response.asks || [];
+        const activeListings = listings.length;
+        const averagePrice =
+            activeListings > 0
+                ? listings.reduce(
+                      (sum, ask) => sum + this.getSafePrice(ask),
+                      0
+                  ) / activeListings
+                : 0;
+
+        return {
+            volumeChange24h: stats.volumeChange24h,
+            priceChange24h: stats.volumeChange24h,
+            salesCount24h: stats.totalSales,
+            averageListingPrice: averagePrice,
+            isUptrend:
+                stats.volumeChange24h > 0 &&
+                stats.volumeChange7d > 0 &&
+                activeListings > 0,
+        };
+    }
+
+    private async getCollectionHealth(
+        collectionAddress: string,
+        runtime: IAgentRuntime
+    ): Promise<CollectionHealth> {
+        const params: OrdersAsksParams = {
+            collection: collectionAddress,
+            status: "active",
+            sortBy: "price",
+        };
+        const response = await this.marketService.getAsks(params, runtime);
+        const stats = await this.marketService.getMarketStats(runtime);
+
+        // Calculate collection-specific health metrics
+        const listings = response.asks || [];
+        const activeListings = listings.length;
+        const lowestPrice = this.getSafePrice(this.getFirstListing(listings));
+
+        const health: CollectionHealth = {
+            uniqueHolders: 0, // TODO: Implement holder tracking
+            floorPrice: lowestPrice || stats.floorPrice,
+            marketCap: stats.totalVolume,
+            isHealthy: false,
+        };
+
+        health.isHealthy =
+            health.floorPrice > 0 &&
+            health.marketCap > 0 &&
+            activeListings >= 2; // Need at least 2 listings for price comparison
+
+        return health;
+    }
+
+    private async validatePositionLimits(
+        collection: string,
+        config: SweepConfig
+    ): Promise<boolean> {
+        // Check collection-specific limit
+        const collectionPositions = this.positions.get(collection) || [];
+        if (collectionPositions.length >= config.maxPositionsPerCollection) {
+            return false;
+        }
+
+        // Check total positions limit
+        let totalPositions = 0;
+        for (const positions of this.positions.values()) {
+            totalPositions += positions.length;
+        }
+
+        return totalPositions < config.maxTotalPositions;
+    }
+
+    private async cleanupStalePositions(config: SweepConfig): Promise<void> {
+        const now = Date.now();
+        for (const [collection, positions] of this.positions.entries()) {
+            const activePositions = positions.filter(
+                (pos) => now - pos.purchaseTime < config.maxHoldingTime
+            );
+            if (activePositions.length !== positions.length) {
+                this.positions.set(collection, activePositions);
+            }
+        }
+    }
+
+    private addPosition(position: Position): void {
+        const collectionPositions =
+            this.positions.get(position.collection) || [];
+        collectionPositions.push(position);
+        this.positions.set(position.collection, collectionPositions);
+    }
+
+    private async validateMarketConditions(
+        collection: string,
+        config: SweepConfig,
+        runtime: IAgentRuntime
+    ): Promise<{
+        valid: boolean;
+        marketTrend: MarketTrend;
+        collectionHealth: CollectionHealth;
+    }> {
+        const [marketTrend, collectionHealth] = await Promise.all([
+            this.getMarketTrend(collection, runtime),
+            this.getCollectionHealth(collection, runtime),
+        ]);
+
+        const valid =
+            marketTrend.volumeChange24h >= config.minDailyVolume &&
+            collectionHealth.uniqueHolders >= config.minUniqueHolders &&
+            collectionHealth.marketCap >= config.minMarketCap &&
+            collectionHealth.isHealthy &&
+            marketTrend.isUptrend;
+
+        return { valid, marketTrend, collectionHealth };
     }
 
     private async estimateGasCosts(gasPrice: number): Promise<GasEstimate> {
@@ -101,6 +274,40 @@ export class TradingService extends BaseReservoirService {
         );
 
         try {
+            // Clean up stale positions first
+            await this.cleanupStalePositions(config);
+
+            // Validate position limits
+            if (!(await this.validatePositionLimits(collection, config))) {
+                return {
+                    purchased: false,
+                    listed: false,
+                    error: "Position limits exceeded",
+                    gasUsed: 0,
+                    estimatedProfit: 0,
+                };
+            }
+
+            // Validate market conditions
+            const { valid, marketTrend, collectionHealth } =
+                await this.validateMarketConditions(
+                    collection,
+                    config,
+                    runtime
+                );
+
+            if (!valid) {
+                return {
+                    purchased: false,
+                    listed: false,
+                    error: "Market conditions unfavorable",
+                    gasUsed: 0,
+                    estimatedProfit: 0,
+                    marketTrend,
+                    collectionHealth,
+                };
+            }
+
             // 1. Get current floor listings
             const params: OrdersAsksParams = {
                 collection,
@@ -163,6 +370,8 @@ export class TradingService extends BaseReservoirService {
                     error: "Price gap too small",
                     gasUsed: 0,
                     estimatedProfit: 0,
+                    marketTrend,
+                    collectionHealth,
                 };
             }
 
@@ -173,6 +382,8 @@ export class TradingService extends BaseReservoirService {
                     error: "Price above maximum purchase threshold",
                     gasUsed: 0,
                     estimatedProfit: 0,
+                    marketTrend,
+                    collectionHealth,
                 };
             }
 
@@ -194,6 +405,8 @@ export class TradingService extends BaseReservoirService {
                     error: "Insufficient profit after gas costs",
                     gasUsed: 0,
                     estimatedProfit,
+                    marketTrend,
+                    collectionHealth,
                 };
             }
 
@@ -236,6 +449,16 @@ export class TradingService extends BaseReservoirService {
 
             await this.executeService.executeListing(listParams, runtime);
 
+            // Track the new position
+            this.addPosition({
+                tokenId,
+                collection,
+                purchasePrice: actualBuyPrice,
+                listPrice: targetListPrice,
+                purchaseTime: Date.now(),
+                gasUsed: gasEstimate.buyGas + gasEstimate.listGas,
+            });
+
             endOperation();
 
             return {
@@ -248,6 +471,8 @@ export class TradingService extends BaseReservoirService {
                 gasUsed: gasEstimate.buyGas + gasEstimate.listGas,
                 estimatedProfit,
                 actualSlippage,
+                marketTrend,
+                collectionHealth,
             };
         } catch (error) {
             console.error("Error in floor sweep:", error);
