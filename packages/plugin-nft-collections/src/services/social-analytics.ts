@@ -1,7 +1,10 @@
 import axios from "axios";
 import { z } from "zod";
-import { SocialMetricsSchema, SocialMetrics } from "../utils/validation";
+import { SocialMetricsSchema } from "../utils/validation";
 import { MemoryCacheManager } from "./cache-manager";
+import { RateLimiter } from "./rate-limiter";
+import { CircuitBreaker } from "../utils/circuit-breaker";
+import { exponentialBackoff } from "../utils/retry";
 
 // Enhanced Social Metrics Schema
 const ExtendedSocialMetricsSchema = SocialMetricsSchema.extend({
@@ -29,186 +32,417 @@ const ExtendedSocialMetricsSchema = SocialMetricsSchema.extend({
         .optional(),
 });
 
-export interface SocialAnalyticsConfig {
+interface SocialAnalyticsConfig {
     twitterApiKey?: string;
-    coinGeckoApiKey?: string;
     duneApiKey?: string;
+    cacheManager?: MemoryCacheManager;
+    rateLimiter?: RateLimiter;
+    maxRetries?: number;
+    retryDelay?: number;
+}
+
+interface DetailedSocialMetrics {
+    sentiment: number; // -100 to 100
+    engagement: number; // 0 to 100
+    mentions: {
+        total: number;
+        positive: number;
+        negative: number;
+        neutral: number;
+    };
+    influencerActivity: {
+        count: number;
+        reach: number;
+        engagement: number;
+    };
+    communityGrowth: {
+        twitter: number;
+        discord: number;
+    };
+    timestamp: string;
 }
 
 export class SocialAnalyticsService {
     private config: SocialAnalyticsConfig;
     private cacheManager: MemoryCacheManager;
-    private static CACHE_TTL = 1 * 60 * 60; // 1 hour cache
+    private rateLimiter?: RateLimiter;
+    private twitterCircuitBreaker: CircuitBreaker;
+    private duneCircuitBreaker: CircuitBreaker;
+    private static CACHE_TTL = 15 * 60; // 15 minutes
 
     constructor(config: SocialAnalyticsConfig = {}) {
-        this.config = config;
-        this.cacheManager = new MemoryCacheManager({
-            ttl: SocialAnalyticsService.CACHE_TTL,
-        });
+        this.config = {
+            twitterApiKey: config.twitterApiKey || process.env.TWITTER_API_KEY,
+            duneApiKey: config.duneApiKey || process.env.DUNE_API_KEY,
+            cacheManager:
+                config.cacheManager ||
+                new MemoryCacheManager({
+                    ttl: SocialAnalyticsService.CACHE_TTL,
+                }),
+            rateLimiter: config.rateLimiter,
+            maxRetries: config.maxRetries || 3,
+            retryDelay: config.retryDelay || 1000,
+        };
+
+        this.cacheManager = this.config.cacheManager;
+        this.rateLimiter = this.config.rateLimiter;
+
+        this.twitterCircuitBreaker = new CircuitBreaker(5, 60000);
+        this.duneCircuitBreaker = new CircuitBreaker(5, 60000);
     }
 
-    async getSocialMetrics(address: string): Promise<SocialMetrics> {
-        const cacheKey = `social_metrics:${address}`;
-
-        // Check cache first
-        const cachedMetrics = this.cacheManager.get<SocialMetrics>(cacheKey);
-        if (cachedMetrics) return cachedMetrics;
+    async getSocialMetrics(
+        collectionAddress: string
+    ): Promise<DetailedSocialMetrics> {
+        const cacheKey = `social_metrics:${collectionAddress}`;
 
         try {
-            // Fetch metrics from multiple sources with error handling
-            const [twitterMetrics, coinGeckoMetrics, duneMetrics] =
+            // Check cache first
+            const cachedData =
+                await this.cacheManager.get<DetailedSocialMetrics>(cacheKey);
+            if (cachedData) return cachedData;
+
+            // Apply rate limiting if configured
+            if (this.rateLimiter) {
+                await this.rateLimiter.consume(collectionAddress);
+            }
+
+            // Fetch data from multiple sources with retries
+            const [twitterData, discordData, duneData] =
                 await Promise.allSettled([
-                    this.getTwitterMetrics(address),
-                    this.getCoinGeckoSocialMetrics(address),
-                    this.getDuneSocialMetrics(address),
+                    this.fetchTwitterMetrics(collectionAddress),
+                    this.fetchDiscordMetrics(collectionAddress),
+                    this.fetchDuneMetrics(collectionAddress),
                 ]);
 
-            const socialMetrics: SocialMetrics = {
-                lastUpdate: new Date().toISOString(),
-                twitterFollowers: this.extractMetric(
-                    twitterMetrics,
-                    "followers_count"
+            // Calculate combined metrics
+            const metrics: DetailedSocialMetrics = {
+                sentiment: this.calculateOverallSentiment(
+                    twitterData,
+                    discordData
                 ),
-                twitterEngagement:
-                    this.calculateTwitterEngagementRate(twitterMetrics),
-                discordMembers: 0, // Placeholder for future implementation
-                discordActive: 0,
-                telegramMembers: this.extractMetric(
-                    coinGeckoMetrics,
-                    "telegram_users"
-                ),
-                telegramActive: 0,
+                engagement: this.calculateEngagement(twitterData, discordData),
+                mentions: this.aggregateMentions(twitterData, discordData),
+                influencerActivity: this.analyzeInfluencerActivity(twitterData),
+                communityGrowth: {
+                    twitter: this.extractGrowthRate(twitterData),
+                    discord: this.extractGrowthRate(discordData),
+                },
+                timestamp: new Date().toISOString(),
             };
 
-            // Validate and cache metrics
-            const validatedMetrics =
-                ExtendedSocialMetricsSchema.parse(socialMetrics);
-            this.cacheManager.set(
+            // Cache the results
+            await this.cacheManager.set(
                 cacheKey,
-                validatedMetrics,
+                metrics,
                 SocialAnalyticsService.CACHE_TTL
             );
 
-            return validatedMetrics;
+            return metrics;
         } catch (error) {
-            console.error(`Social metrics fetch failed for ${address}:`, error);
-            throw new Error(
-                `Failed to retrieve social metrics: ${error.message}`
+            console.error(
+                `Failed to fetch social metrics for ${collectionAddress}:`,
+                error
             );
+            throw error;
         }
     }
 
-    private async getTwitterMetrics(address: string) {
-        if (!this.config.twitterApiKey) {
-            console.warn("Twitter API key not provided for social metrics");
-            return undefined;
+    private async fetchTwitterMetrics(collectionAddress: string): Promise<any> {
+        if (
+            !this.config.twitterApiKey ||
+            !this.twitterCircuitBreaker.isAvailable()
+        ) {
+            return null;
         }
 
         try {
-            const response = await axios.get(
-                `https://api.twitter.com/2/users/by/username/${address}`,
-                {
-                    headers: {
-                        Authorization: `Bearer ${this.config.twitterApiKey}`,
-                    },
-                }
+            const result = await exponentialBackoff(
+                async () => {
+                    const response = await axios.get(
+                        `https://api.twitter.com/2/tweets/search/recent`,
+                        {
+                            params: {
+                                query: `${collectionAddress} OR #NFT`,
+                                "tweet.fields": "public_metrics,sentiment",
+                                max_results: 100,
+                            },
+                            headers: {
+                                Authorization: `Bearer ${this.config.twitterApiKey}`,
+                            },
+                        }
+                    );
+                    return response.data;
+                },
+                this.config.maxRetries,
+                this.config.retryDelay
             );
 
-            return {
-                followers_count:
-                    response.data.data.public_metrics.followers_count,
-                following_count:
-                    response.data.data.public_metrics.following_count,
-                tweet_count: response.data.data.public_metrics.tweet_count,
-                engagement_rate: this.calculateTwitterEngagementRate(
-                    response.data.data
-                ),
-            };
+            this.twitterCircuitBreaker.recordSuccess();
+            return result;
         } catch (error) {
-            console.error("Twitter metrics fetch failed", error);
-            return undefined;
+            this.twitterCircuitBreaker.recordFailure();
+            console.error("Twitter metrics fetch failed:", error);
+            return null;
         }
     }
 
-    private async getCoinGeckoSocialMetrics(address: string) {
-        if (!this.config.coinGeckoApiKey) {
-            console.warn("CoinGecko API key not provided for social metrics");
+    private async fetchDiscordMetrics(collectionAddress: string): Promise<any> {
+        // Implementation for Discord metrics
+        return null;
+    }
+
+    private async fetchDuneMetrics(collectionAddress: string): Promise<any> {
+        if (!this.config.duneApiKey || !this.duneCircuitBreaker.isAvailable()) {
+            return null;
         }
 
         try {
-            const response = await axios.get(
-                `https://api.coingecko.com/api/v3/coins/${address}`
-            );
-            return {
-                community_score: response.data.community_score,
-                twitter_followers: response.data.twitter_followers,
-                telegram_users: response.data.telegram_users,
-            };
-        } catch (error) {
-            console.error("CoinGecko metrics fetch failed", error);
-            return undefined;
-        }
-    }
-
-    private async getDuneSocialMetrics(address: string) {
-        if (!this.config.duneApiKey) {
-            console.warn("Dune API key not provided for social metrics");
-            return undefined;
-        }
-
-        try {
-            const response = await axios.get(
-                `https://api.dune.com/api/v1/query/${address}/results`,
-                {
-                    headers: { "X-Dune-API-Key": this.config.duneApiKey },
-                }
+            const result = await exponentialBackoff(
+                async () => {
+                    const response = await axios.get(
+                        `https://api.dune.com/api/v1/query/123/results`,
+                        {
+                            params: {
+                                address: collectionAddress,
+                            },
+                            headers: {
+                                "x-dune-api-key": this.config.duneApiKey,
+                            },
+                        }
+                    );
+                    return response.data;
+                },
+                this.config.maxRetries,
+                this.config.retryDelay
             );
 
-            return {
-                total_transactions: response.data.total_transactions,
-                unique_wallets: response.data.unique_wallets,
-                avg_transaction_value: response.data.avg_transaction_value,
-            };
+            this.duneCircuitBreaker.recordSuccess();
+            return result;
         } catch (error) {
-            console.error("Dune metrics fetch failed", error);
-            return undefined;
+            this.duneCircuitBreaker.recordFailure();
+            console.error("Dune metrics fetch failed:", error);
+            return null;
         }
     }
 
-    // Utility method to extract specific metrics safely
-    private extractMetric(
-        result: PromiseSettledResult<any>,
-        key: string
-    ): number | undefined {
-        if (result.status === "fulfilled" && result.value) {
-            return result.value[key];
+    private calculateOverallSentiment(
+        twitterData: PromiseSettledResult<any>,
+        discordData: PromiseSettledResult<any>
+    ): number {
+        let sentiment = 0;
+        let weight = 0;
+
+        if (twitterData.status === "fulfilled" && twitterData.value) {
+            sentiment += this.analyzeTweetSentiment(twitterData.value) * 0.7;
+            weight += 0.7;
         }
-        return undefined;
+
+        if (discordData.status === "fulfilled" && discordData.value) {
+            sentiment += this.analyzeDiscordSentiment(discordData.value) * 0.3;
+            weight += 0.3;
+        }
+
+        return weight > 0 ? sentiment / weight : 0;
     }
 
-    // Placeholder for more sophisticated engagement rate calculation
-    private calculateTwitterEngagementRate(userData: any): number {
-        // Basic engagement rate calculation
-        // Implement more sophisticated logic as needed
-        const { followers_count, tweet_count } = userData.public_metrics;
-        return followers_count > 0
-            ? Math.min((tweet_count / followers_count) * 100, 100)
-            : 0;
+    private calculateEngagement(
+        twitterData: PromiseSettledResult<any>,
+        discordData: PromiseSettledResult<any>
+    ): number {
+        let engagement = 0;
+        let weight = 0;
+
+        if (twitterData.status === "fulfilled" && twitterData.value) {
+            engagement +=
+                this.analyzeTwitterEngagement(twitterData.value) * 0.6;
+            weight += 0.6;
+        }
+
+        if (discordData.status === "fulfilled" && discordData.value) {
+            engagement +=
+                this.analyzeDiscordEngagement(discordData.value) * 0.4;
+            weight += 0.4;
+        }
+
+        return weight > 0 ? engagement / weight : 0;
     }
 
-    // Sentiment and growth tracking placeholders
-    async getSentimentAnalysis(address: string): Promise<number> {
-        // Placeholder for sentiment analysis
+    private aggregateMentions(
+        twitterData: PromiseSettledResult<any>,
+        discordData: PromiseSettledResult<any>
+    ): DetailedSocialMetrics["mentions"] {
+        const mentions = {
+            total: 0,
+            positive: 0,
+            negative: 0,
+            neutral: 0,
+        };
+
+        if (twitterData.status === "fulfilled" && twitterData.value) {
+            const twitterMentions = this.analyzeTwitterMentions(
+                twitterData.value
+            );
+            mentions.total += twitterMentions.total;
+            mentions.positive += twitterMentions.positive;
+            mentions.negative += twitterMentions.negative;
+            mentions.neutral += twitterMentions.neutral;
+        }
+
+        if (discordData.status === "fulfilled" && discordData.value) {
+            const discordMentions = this.analyzeDiscordMentions(
+                discordData.value
+            );
+            mentions.total += discordMentions.total;
+            mentions.positive += discordMentions.positive;
+            mentions.negative += discordMentions.negative;
+            mentions.neutral += discordMentions.neutral;
+        }
+
+        return mentions;
+    }
+
+    private analyzeInfluencerActivity(
+        twitterData: PromiseSettledResult<any>
+    ): DetailedSocialMetrics["influencerActivity"] {
+        if (twitterData.status !== "fulfilled" || !twitterData.value) {
+            return {
+                count: 0,
+                reach: 0,
+                engagement: 0,
+            };
+        }
+
+        const tweets = twitterData.value.data || [];
+        const influencers = tweets.filter(
+            (tweet: any) => tweet.author_metrics?.followers_count > 10000
+        );
+
+        return {
+            count: influencers.length,
+            reach: influencers.reduce(
+                (sum: number, tweet: any) =>
+                    sum + (tweet.author_metrics?.followers_count || 0),
+                0
+            ),
+            engagement: influencers.reduce(
+                (sum: number, tweet: any) =>
+                    sum + (tweet.public_metrics?.engagement_count || 0),
+                0
+            ),
+        };
+    }
+
+    private extractGrowthRate(data: PromiseSettledResult<any>): number {
+        if (data.status !== "fulfilled" || !data.value) {
+            return 0;
+        }
+
+        // Implementation depends on data structure
         return 0;
     }
 
-    async getGrowthRate(address: string): Promise<number> {
-        // Placeholder for growth rate tracking
+    private analyzeTweetSentiment(twitterData: any): number {
+        if (!twitterData?.data) return 0;
+
+        const tweets = twitterData.data;
+        let totalSentiment = 0;
+
+        for (const tweet of tweets) {
+            totalSentiment += this.getSentimentScore(tweet.text);
+        }
+
+        return tweets.length > 0 ? (totalSentiment / tweets.length) * 100 : 0;
+    }
+
+    private analyzeDiscordSentiment(discordData: any): number {
+        // Implementation for Discord sentiment analysis
         return 0;
+    }
+
+    private analyzeTwitterEngagement(twitterData: any): number {
+        if (!twitterData?.data) return 0;
+
+        const tweets = twitterData.data;
+        let totalEngagement = 0;
+
+        for (const tweet of tweets) {
+            const metrics = tweet.public_metrics || {};
+            totalEngagement +=
+                (metrics.retweet_count || 0) * 2 +
+                (metrics.reply_count || 0) * 1.5 +
+                (metrics.like_count || 0);
+        }
+
+        return Math.min(totalEngagement / (tweets.length || 1) / 100, 100);
+    }
+
+    private analyzeDiscordEngagement(discordData: any): number {
+        // Implementation for Discord engagement analysis
+        return 0;
+    }
+
+    private analyzeTwitterMentions(
+        twitterData: any
+    ): DetailedSocialMetrics["mentions"] {
+        if (!twitterData?.data) {
+            return {
+                total: 0,
+                positive: 0,
+                negative: 0,
+                neutral: 0,
+            };
+        }
+
+        const tweets = twitterData.data;
+        const mentions = {
+            total: tweets.length,
+            positive: 0,
+            negative: 0,
+            neutral: 0,
+        };
+
+        for (const tweet of tweets) {
+            const sentiment = this.getSentimentScore(tweet.text);
+            if (sentiment > 0.2) mentions.positive++;
+            else if (sentiment < -0.2) mentions.negative++;
+            else mentions.neutral++;
+        }
+
+        return mentions;
+    }
+
+    private analyzeDiscordMentions(
+        discordData: any
+    ): DetailedSocialMetrics["mentions"] {
+        // Implementation for Discord mentions analysis
+        return {
+            total: 0,
+            positive: 0,
+            negative: 0,
+            neutral: 0,
+        };
+    }
+
+    private getSentimentScore(text: string): number {
+        // Basic sentiment analysis implementation
+        // In production, use a proper NLP service
+        const positiveWords = ["bullish", "moon", "gem", "amazing", "great"];
+        const negativeWords = ["bearish", "scam", "rug", "bad", "awful"];
+
+        const words = text.toLowerCase().split(/\s+/);
+        let score = 0;
+
+        for (const word of words) {
+            if (positiveWords.includes(word)) score += 1;
+            if (negativeWords.includes(word)) score -= 1;
+        }
+
+        return score / words.length;
     }
 }
 
 export const socialAnalyticsService = new SocialAnalyticsService({
-    twitterApiKey: process.env.TWITTER_API_KEY || "",
-    duneApiKey: process.env.DUNE_API_KEY || "",
+    twitterApiKey: process.env.TWITTER_API_KEY,
+    duneApiKey: process.env.DUNE_API_KEY,
 });

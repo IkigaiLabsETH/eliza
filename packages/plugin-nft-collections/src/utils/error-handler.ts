@@ -1,280 +1,291 @@
-import { z } from "zod";
-import { v4 as uuidv4 } from "uuid";
+import { EventEmitter } from "events";
 
-// Comprehensive Error Types
 export enum ErrorType {
-    VALIDATION = "VALIDATION",
-    NETWORK = "NETWORK",
-    RATE_LIMIT = "RATE_LIMIT",
     API = "API",
-    INTERNAL = "INTERNAL",
+    VALIDATION = "VALIDATION",
+    RATE_LIMIT = "RATE_LIMIT",
     AUTHENTICATION = "AUTHENTICATION",
-    PERMISSION = "PERMISSION",
+    NETWORK = "NETWORK",
+    DATABASE = "DATABASE",
+    UNKNOWN = "UNKNOWN",
 }
 
-// Expanded Error Codes
 export enum ErrorCode {
-    // Validation Errors
-    INVALID_ADDRESS = "INVALID_ADDRESS",
-    INVALID_TOKEN_ID = "INVALID_TOKEN_ID",
-    INVALID_PRICE = "INVALID_PRICE",
-    INVALID_DATA = "INVALID_DATA",
+    // API Errors
+    API_REQUEST_FAILED = "API_REQUEST_FAILED",
+    API_RESPONSE_INVALID = "API_RESPONSE_INVALID",
+    API_KEY_INVALID = "API_KEY_INVALID",
 
-    // Network Errors
-    REQUEST_TIMEOUT = "REQUEST_TIMEOUT",
-    NETWORK_ERROR = "NETWORK_ERROR",
-    DNS_RESOLUTION_ERROR = "DNS_RESOLUTION_ERROR",
+    // Validation Errors
+    INVALID_PARAMETERS = "INVALID_PARAMETERS",
+    MISSING_REQUIRED_FIELD = "MISSING_REQUIRED_FIELD",
+    INVALID_FORMAT = "INVALID_FORMAT",
 
     // Rate Limit Errors
     RATE_LIMIT_EXCEEDED = "RATE_LIMIT_EXCEEDED",
-
-    // API Errors
-    API_ERROR = "API_ERROR",
-    API_KEY_INVALID = "API_KEY_INVALID",
-    API_RESPONSE_INVALID = "API_RESPONSE_INVALID",
-    UNSUPPORTED_API_VERSION = "UNSUPPORTED_API_VERSION",
+    TOO_MANY_REQUESTS = "TOO_MANY_REQUESTS",
 
     // Authentication Errors
     UNAUTHORIZED = "UNAUTHORIZED",
     TOKEN_EXPIRED = "TOKEN_EXPIRED",
+    INVALID_CREDENTIALS = "INVALID_CREDENTIALS",
 
-    // Permission Errors
-    INSUFFICIENT_PERMISSIONS = "INSUFFICIENT_PERMISSIONS",
+    // Network Errors
+    NETWORK_UNAVAILABLE = "NETWORK_UNAVAILABLE",
+    TIMEOUT = "TIMEOUT",
+    CONNECTION_REFUSED = "CONNECTION_REFUSED",
 
-    // Internal Errors
-    INTERNAL_ERROR = "INTERNAL_ERROR",
-    CACHE_ERROR = "CACHE_ERROR",
-    DEPENDENCY_ERROR = "DEPENDENCY_ERROR",
+    // Database Errors
+    DB_CONNECTION_ERROR = "DB_CONNECTION_ERROR",
+    QUERY_FAILED = "QUERY_FAILED",
+    RECORD_NOT_FOUND = "RECORD_NOT_FOUND",
+
+    // Unknown Errors
+    UNKNOWN_ERROR = "UNKNOWN_ERROR",
 }
 
-// Enhanced Error Schema
-const ErrorSchema = z.object({
-    id: z.string().uuid(),
-    type: z.nativeEnum(ErrorType),
-    code: z.nativeEnum(ErrorCode),
-    message: z.string(),
-    details: z.record(z.unknown()).optional(),
-    timestamp: z.date(),
-    retryable: z.boolean(),
-    severity: z.enum(["LOW", "MEDIUM", "HIGH", "CRITICAL"]).default("MEDIUM"),
-    correlationId: z.string().optional(),
-});
+export interface ErrorDetails {
+    details?: Record<string, any>;
+    retryable?: boolean;
+    severity?: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+    suggestedAction?: string;
+}
 
-export type NFTError = z.infer<typeof ErrorSchema>;
+export class NFTError extends Error {
+    public readonly type: ErrorType;
+    public readonly code: ErrorCode;
+    public readonly details?: Record<string, any>;
+    public readonly retryable: boolean;
+    public readonly severity: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+    public readonly timestamp: string;
+    public readonly suggestedAction?: string;
 
-// Advanced Error Factory
-export class NFTErrorFactory {
-    static create(
+    constructor(
         type: ErrorType,
         code: ErrorCode,
         message: string,
-        options: {
-            details?: Record<string, unknown>;
-            retryable?: boolean;
-            severity?: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
-            correlationId?: string;
-        } = {}
-    ): NFTError {
-        return ErrorSchema.parse({
-            id: uuidv4(),
-            type,
-            code,
-            message,
-            details: options.details,
-            timestamp: new Date(),
-            retryable: options.retryable ?? false,
-            severity: options.severity ?? "MEDIUM",
-            correlationId: options.correlationId,
-        });
+        errorDetails: ErrorDetails = {}
+    ) {
+        super(message);
+        this.name = "NFTError";
+        this.type = type;
+        this.code = code;
+        this.details = errorDetails.details;
+        this.retryable = errorDetails.retryable ?? false;
+        this.severity = errorDetails.severity ?? "MEDIUM";
+        this.timestamp = new Date().toISOString();
+        this.suggestedAction = errorDetails.suggestedAction;
+
+        // Ensure proper stack trace
+        Error.captureStackTrace(this, this.constructor);
     }
 
-    static fromError(
-        error: unknown,
-        defaultType: ErrorType = ErrorType.INTERNAL
+    public toJSON(): Record<string, any> {
+        return {
+            name: this.name,
+            type: this.type,
+            code: this.code,
+            message: this.message,
+            details: this.details,
+            retryable: this.retryable,
+            severity: this.severity,
+            timestamp: this.timestamp,
+            suggestedAction: this.suggestedAction,
+            stack: this.stack,
+        };
+    }
+}
+
+export class NFTErrorFactory {
+    public static create(
+        type: ErrorType,
+        code: ErrorCode,
+        message: string,
+        details?: ErrorDetails
     ): NFTError {
-        if (error instanceof Error) {
-            return this.create(
-                defaultType,
-                ErrorCode.INTERNAL_ERROR,
+        return new NFTError(type, code, message, details);
+    }
+
+    public static fromError(error: Error): NFTError {
+        if (error instanceof NFTError) {
+            return error;
+        }
+
+        // Network errors
+        if (error.name === "NetworkError") {
+            return new NFTError(
+                ErrorType.NETWORK,
+                ErrorCode.NETWORK_UNAVAILABLE,
                 error.message,
                 {
-                    details: {
-                        stack: error.stack,
-                    },
-                    retryable: false,
+                    retryable: true,
                     severity: "HIGH",
+                    suggestedAction: "Check network connectivity and retry",
                 }
             );
         }
-        return this.create(
-            defaultType,
-            ErrorCode.INTERNAL_ERROR,
-            "Unknown error occurred",
+
+        // Timeout errors
+        if (error.name === "TimeoutError") {
+            return new NFTError(
+                ErrorType.NETWORK,
+                ErrorCode.TIMEOUT,
+                error.message,
+                {
+                    retryable: true,
+                    severity: "MEDIUM",
+                    suggestedAction: "Retry with increased timeout",
+                }
+            );
+        }
+
+        // API errors
+        if (error.message.includes("API")) {
+            return new NFTError(
+                ErrorType.API,
+                ErrorCode.API_REQUEST_FAILED,
+                error.message,
+                {
+                    retryable: false,
+                    severity: "HIGH",
+                    suggestedAction:
+                        "Check API documentation and request format",
+                }
+            );
+        }
+
+        // Default unknown error
+        return new NFTError(
+            ErrorType.UNKNOWN,
+            ErrorCode.UNKNOWN_ERROR,
+            error.message,
             {
-                details: { error },
-                severity: "CRITICAL",
+                retryable: false,
+                severity: "MEDIUM",
+                suggestedAction: "Contact support if error persists",
             }
         );
     }
 }
 
-// Enhanced Error Handler with Advanced Features
-export class ErrorHandler {
+export class ErrorHandler extends EventEmitter {
     private static instance: ErrorHandler;
-    private errorCallbacks: Array<(error: NFTError) => void> = [];
-    private telemetryCallbacks: Array<(error: NFTError) => void> = [];
+    private errorLog: NFTError[] = [];
+    private readonly maxLogSize: number = 1000;
 
-    private constructor() {}
+    private constructor() {
+        super();
+    }
 
-    static getInstance(): ErrorHandler {
+    public static getInstance(): ErrorHandler {
         if (!ErrorHandler.instance) {
             ErrorHandler.instance = new ErrorHandler();
         }
         return ErrorHandler.instance;
     }
 
-    registerErrorCallback(callback: (error: NFTError) => void): void {
-        this.errorCallbacks.push(callback);
+    public handleError(error: Error | NFTError): void {
+        const nftError =
+            error instanceof NFTError
+                ? error
+                : NFTErrorFactory.fromError(error);
+
+        // Log error
+        this.logError(nftError);
+
+        // Emit error event
+        this.emit("error", nftError);
+
+        // Handle based on severity
+        switch (nftError.severity) {
+            case "CRITICAL":
+                this.handleCriticalError(nftError);
+                break;
+            case "HIGH":
+                this.handleHighSeverityError(nftError);
+                break;
+            case "MEDIUM":
+                this.handleMediumSeverityError(nftError);
+                break;
+            case "LOW":
+                this.handleLowSeverityError(nftError);
+                break;
+        }
     }
 
-    registerTelemetryCallback(callback: (error: NFTError) => void): void {
-        this.telemetryCallbacks.push(callback);
+    private logError(error: NFTError): void {
+        this.errorLog.push(error);
+        if (this.errorLog.length > this.maxLogSize) {
+            this.errorLog = this.errorLog.slice(-this.maxLogSize);
+        }
+
+        console.error("NFT Error:", error.toJSON());
     }
 
-    handleError(error: NFTError): void {
-        // Advanced logging
-        console.error(
-            JSON.stringify(
-                {
-                    errorId: error.id,
-                    type: error.type,
-                    code: error.code,
-                    message: error.message,
-                    severity: error.severity,
-                    timestamp: error.timestamp,
-                },
-                null,
-                2
-            )
-        );
+    private handleCriticalError(error: NFTError): void {
+        // Implement critical error handling
+        // For example: Stop all operations, notify admin, etc.
+        this.emit("critical-error", error);
+    }
 
-        // Execute registered error callbacks
-        this.errorCallbacks.forEach((callback) => {
-            try {
-                callback(error);
-            } catch (callbackError) {
-                console.error("Error in error callback:", callbackError);
-            }
+    private handleHighSeverityError(error: NFTError): void {
+        // Implement high severity error handling
+        // For example: Retry with backoff, alert monitoring, etc.
+        this.emit("high-severity-error", error);
+    }
+
+    private handleMediumSeverityError(error: NFTError): void {
+        // Implement medium severity error handling
+        // For example: Log for monitoring, retry if retryable
+        this.emit("medium-severity-error", error);
+    }
+
+    private handleLowSeverityError(error: NFTError): void {
+        // Implement low severity error handling
+        // For example: Log for monitoring only
+        this.emit("low-severity-error", error);
+    }
+
+    public getErrorLog(): NFTError[] {
+        return [...this.errorLog];
+    }
+
+    public getErrorStats(timeRange?: number): {
+        total: number;
+        bySeverity: Record<string, number>;
+        byType: Record<string, number>;
+        byCode: Record<string, number>;
+    } {
+        const relevantErrors = timeRange
+            ? this.errorLog.filter((error) => {
+                  const errorTime = new Date(error.timestamp).getTime();
+                  return Date.now() - errorTime <= timeRange;
+              })
+            : this.errorLog;
+
+        const stats = {
+            total: relevantErrors.length,
+            bySeverity: {} as Record<string, number>,
+            byType: {} as Record<string, number>,
+            byCode: {} as Record<string, number>,
+        };
+
+        relevantErrors.forEach((error) => {
+            // Count by severity
+            stats.bySeverity[error.severity] =
+                (stats.bySeverity[error.severity] || 0) + 1;
+
+            // Count by type
+            stats.byType[error.type] = (stats.byType[error.type] || 0) + 1;
+
+            // Count by code
+            stats.byCode[error.code] = (stats.byCode[error.code] || 0) + 1;
         });
 
-        // Send to telemetry
-        this.telemetryCallbacks.forEach((callback) => {
-            try {
-                callback(error);
-            } catch (callbackError) {
-                console.error("Error in telemetry callback:", callbackError);
-            }
-        });
-
-        // Specialized error handling
-        this.routeErrorHandling(error);
+        return stats;
     }
 
-    private routeErrorHandling(error: NFTError): void {
-        switch (error.type) {
-            case ErrorType.RATE_LIMIT:
-                this.handleRateLimitError(error);
-                break;
-            case ErrorType.NETWORK:
-                this.handleNetworkError(error);
-                break;
-            case ErrorType.API:
-                this.handleAPIError(error);
-                break;
-            case ErrorType.AUTHENTICATION:
-                this.handleAuthenticationError(error);
-                break;
-            default:
-                break;
-        }
-    }
-
-    private handleRateLimitError(error: NFTError): void {
-        if (error.retryable) {
-            const retryDelay = this.calculateExponentialBackoff(error);
-            console.log(`Rate limit error. Retrying in ${retryDelay}ms`);
-        }
-    }
-
-    private handleNetworkError(error: NFTError): void {
-        if (error.retryable) {
-            const retryDelay = this.calculateExponentialBackoff(error);
-            console.log(`Network error. Retrying in ${retryDelay}ms`);
-        }
-    }
-
-    private handleAPIError(error: NFTError): void {
-        switch (error.code) {
-            case ErrorCode.API_KEY_INVALID:
-                console.error("Critical: Invalid API key detected");
-                break;
-            case ErrorCode.UNSUPPORTED_API_VERSION:
-                console.error("API version no longer supported");
-                break;
-        }
-    }
-
-    private handleAuthenticationError(error: NFTError): void {
-        switch (error.code) {
-            case ErrorCode.TOKEN_EXPIRED:
-                console.log("Attempting token refresh");
-                break;
-            case ErrorCode.UNAUTHORIZED:
-                console.error("Access denied");
-                break;
-        }
-    }
-
-    private calculateExponentialBackoff(
-        error: NFTError,
-        baseDelay: number = 1000,
-        maxDelay: number = 30000
-    ): number {
-        // Simulate retry attempt tracking
-        const attempt = (error.details?.retryAttempt as number) || 0;
-        return Math.min(baseDelay * Math.pow(2, attempt), maxDelay);
+    public clearErrorLog(): void {
+        this.errorLog = [];
     }
 }
-
-// Utility Functions
-export function isRetryableError(error: NFTError): boolean {
-    return error.retryable && error.severity !== "CRITICAL";
-}
-
-export function shouldRetry(
-    error: NFTError,
-    attempt: number,
-    maxRetries: number = 3
-): boolean {
-    return isRetryableError(error) && attempt < maxRetries;
-}
-
-// Example Usage
-/*
-try {
-    // Your code here
-} catch (error) {
-    const nftError = NFTErrorFactory.create(
-        ErrorType.API,
-        ErrorCode.API_ERROR,
-        'Detailed API request failure',
-        {
-            details: { originalError: error },
-            retryable: true,
-            severity: 'HIGH',
-            correlationId: 'unique-request-id'
-        }
-    );
-    ErrorHandler.getInstance().handleError(nftError);
-}
-*/
